@@ -12,7 +12,7 @@
 
 import json
 
-with open('/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_metadata.ndjson', 'r', encoding='utf-8') as f:
+with open('/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_paper_metadata/arxiv_metadata.ndjson', 'r', encoding='utf-8') as f:
     data = [json.loads(line) for line in f]
 
 
@@ -25,7 +25,7 @@ for i in range(len(data)):
     # if "Distraction-based neural networks for modeling documents" in data[i]['metadata']['title']:
     #     print(data[i])
     #     break
-    if "1506.02617" in data[i]['metadata']['id']:
+    if "1609.08144" in data[i]['metadata']['id']:
         print(data[i])
         break
     # if "1706.03762" in data[i]['metadata']['id']:

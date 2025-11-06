@@ -4,7 +4,8 @@ from map_refs_by_markers import match_refs_by_marker
 from map_refs_by_names import get_matched_authors
 from find_refs_by_grobid import find_refs
 from dedupe_refs import deduplicate_refs
-from arxiv_paper_search import find_arxiv
+from ref_marker_tailing import parse_mark_refs
+from dwm_meta_idx_quering import search_papers_parallel
 from urllib.parse import urlparse
 import tiktoken
 import hashlib
@@ -77,7 +78,7 @@ def download_pdf():
 
 
 # pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1308.0850v5.pdf" # markers
-pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1508.04025v5.pdf"
+# pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1508.04025v5.pdf"
 # pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1508.07909v5.pdf"
 # pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1511.06114v4.pdf"
 # pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1601.06733v7.pdf"
@@ -92,7 +93,7 @@ pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_he
 # pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1703.10722v3.pdf"
 # pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1705.03122v3.pdf"
 # pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1705.04304v3.pdf"
-# pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1706.03762v7.pdf" # markers
+pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1706.03762v7.pdf" # markers
 # pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1512.05287v5.pdf" # markers
 # pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1602.01137v1.pdf" # markers
 
@@ -102,7 +103,14 @@ sections = parse_pdf_with_grobid(pdf_path)
 
 # 3. For each section
 use_markers=False
+db_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_paper_metadata/arxiv_meta_4.db"
+candidate_limit = 100   # tune down for speed, up for recall
+top_k = 1
+use_authors = True  # title-only mode (fast)
+max_workers = 12
 for i, section in enumerate(sections): # type: ignore
+    if i < 5:
+        continue
     matched_refs = []
     cache_arxiv_found_refs = {}
     chunk_json = {}
@@ -116,16 +124,35 @@ for i, section in enumerate(sections): # type: ignore
     print(f"use_markers={use_markers}, bool_check={bool_check}")
     print("-"*100)
 
-    
-
     if use_markers: # If 3.1. a) If numbered markers as links to refs like "[13]", "[1, 2, 3]", "(13)", "(1, 2, 3)" -> use regex to find all refs
-        mapping = match_refs_by_marker(pdf_path, section, as_list=True)
-        mapping = mapping['reference_mapping']
-        for i, ref in enumerate(mapping):
-            # print("m+", i+1, ref)
-            # print("-"*100)
+        refs = match_refs_by_marker(pdf_path, section, as_list=True)
+        refs = refs['reference_mapping']
+        refs = set(refs)
+        refs_tailed = parse_mark_refs(refs) # type: ignore
+        for i, ref in enumerate(refs_tailed):
+            print(f"{ref},")
+
+        parallel_results = search_papers_parallel(
+            refs_tailed, 
+            db_path, 
+            top_k=top_k, 
+            use_authors=use_authors,
+            max_workers=max_workers  # Adjust based on your system capabilities
+        )
+        print('^'*100)
+        # print(parallel_results)
+        for i, res in enumerate(parallel_results):
+            if res:
+                print(i+1, res[0]['arxiv_id'], res[0]['title'], res[0]['authors']) # type: ignore
+            else:
+                print(i, "[NOT FOUND]")
+            print("-"*100)
+        
+            # tailed_ref = parse_mark_ref(ref)
+            # print(f"{ref},")
+            # print({"authors_teiled": tailed_ref["authors_teiled"], "title": tailed_ref["title"]})
             # if ref not in cache_arxiv_found_refs:
-            matched_refs.append(ref)
+            # matched_refs.append(ref)
         # MAKE A GROBID TO A REF STRING TO MAKE IT STRUCTURED
 
     else:           # If 3.1. b) If author names as links to refs like "(Luong et al., 2015)" and other variants -> use GROBID to find all refs
@@ -150,7 +177,7 @@ for i, section in enumerate(sections): # type: ignore
             #     break
             # continue
             checks = {'title': ref['title'], 'authors_teiled': ref['authors_teiled']}
-            print(f"{checks},")
+            print(f"`{checks}`,")
             # print('-'*100)
             if i == 15:
                 break
