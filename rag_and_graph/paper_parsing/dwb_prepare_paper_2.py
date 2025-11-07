@@ -79,8 +79,8 @@ def download_pdf():
 # doi CAN BE USED FOR GETTING ARXIV ID
 
 
-# pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1308.0850v5.pdf" # markers
-pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1508.04025v5.pdf"
+pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1308.0850v5.pdf" # markers
+# pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1508.04025v5.pdf"
 # pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1508.07909v5.pdf"
 # pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1511.06114v4.pdf"
 # pdf_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1601.06733v7.pdf"
@@ -110,14 +110,14 @@ use_markers = uses_numbered_citations(pdf_path) # 3.1. Check if the sections has
 db_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_paper_metadata/arxiv_meta_4.db"
 candidate_limit = 100   # tune down for speed, up for recall
 top_k = 1
-use_authors = True  # title-only mode (fast)
+use_authors = False  # title-only mode (fast)
 max_workers = 12
 for i, section in enumerate(sections): # type: ignore
     matched_refs = []
-    cache_arxiv_found_refs = {}
+    cache_arxiv_found_refs = {} # full
+    seen_refs = set()           # fill
     chunk_json = {}
     citations = []
-    seen_ref = set()
     print(section)
 
     print("-"*100)
@@ -125,20 +125,38 @@ for i, section in enumerate(sections): # type: ignore
     print("-"*100)
 
     if use_markers: # If 3.1. a) If numbered markers as links to refs like "[13]", "[1, 2, 3]", "(13)", "(1, 2, 3)" -> use regex to find all refs
-        refs = match_refs_by_marker(pdf_path, section, as_list=True)
-        refs = refs['reference_mapping']
-        refs = set(refs)
-        refs_tailed = parse_mark_refs(refs) # type: ignore
-        for i, ref in enumerate(refs_tailed):
-            print(f"{ref},")
+        # Loop over all sections to collect all refs
+        # Make parallel search for all refs to cache it
+        if not seen_refs:
+            for section in sections: # type: ignore
+                refs = match_refs_by_marker(pdf_path, section, as_list=True)
+                refs = refs['reference_mapping']
+                # refs = set(refs)
+                seen_refs.update(refs)
+            seen_refs = {s for s in seen_refs if "Reference not found" not in s}
+            refs_tailed = parse_mark_refs(seen_refs) # type: ignore
+            for ref in refs_tailed:
+                print(f"{ref},")
+            break
+            parallel_results = search_papers_parallel(refs_tailed, db_path, top_k=top_k, use_authors=use_authors, max_workers=max_workers)
+                # cache_arxiv_found_refs[]
+            # print(parallel_results[0])
+            for i, p_res in enumerate(parallel_results):
+                print(i+1, p_res[0]['arxiv_id'], p_res[0]['title'], p_res[0]['authors']) # type: ignore
+                print('-'*100)
+        break
 
-        parallel_results = search_papers_parallel(
-            refs_tailed, 
-            db_path, 
-            top_k=top_k, 
-            use_authors=use_authors,
-            max_workers=max_workers  # Adjust based on your system capabilities
-        )
+        refs = match_refs_by_marker(pdf_path, section, as_list=True)
+
+
+
+
+        # for seen_ref in filtered_set:
+        #     print(seen_ref)
+        #     print('-'*100)
+        # break
+        # for i, ref in enumerate(refs_tailed):
+        #     print(f"{ref},")
         print('^'*100)
         # print(parallel_results)
         for i, res in enumerate(parallel_results):
