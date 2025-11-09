@@ -6,7 +6,7 @@ from map_refs_by_names import get_matched_authors
 from find_refs_by_grobid import find_refs
 from dedupe_refs import deduplicate_refs
 from ref_marker_tailing import parse_mark_refs
-from dwm_meta_idx_quering import search_papers_parallel
+# from dwm_meta_idx_quering import search_papers_parallel
 from urllib.parse import urlparse
 import tiktoken
 import hashlib

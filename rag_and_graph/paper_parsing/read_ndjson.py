@@ -12,45 +12,51 @@
 
 import json
 
-with open('/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_paper_metadata/arxiv_metadata.ndjson', 'r', encoding='utf-8') as f:
-    data = [json.loads(line) for line in f]
+# with open('/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_paper_metadata/arxiv_metadata.ndjson', 'r', encoding='utf-8') as f:
+#     data = [json.loads(line) for line in f]
+
+# # for key, value in data[200]['metadata'].items():  # Print first 5 records as a sample
+# for i in range(len(data)):
+#     # print(f"{key}: {value}")
+#     # print("-" * 40)
+#     # print(f"{key}: {value}")
+#     print(i)
+#     # if "Distraction-based neural networks for modeling documents" in data[i]['metadata']['title']:
+#     #     print(data[i])
+#     #     break
+#     if "610877" in data[i]['metadata']['id']:
+#         print(data[i])
+#         break
+#     # if "1706.03762" in data[i]['metadata']['id']:
+#     #     print(data[i])
+#     #     break
 
 
-# for key, value in data[200]['metadata'].items():  # Print first 5 records as a sample
-for i in range(len(data)):
-    # print(f"{key}: {value}")
-    # print("-" * 40)
-    # print(f"{key}: {value}")
-    print(i)
-    # if "Distraction-based neural networks for modeling documents" in data[i]['metadata']['title']:
-    #     print(data[i])
-    #     break
-    if "1609.08144" in data[i]['metadata']['id']:
-        print(data[i])
-        break
-    # if "1706.03762" in data[i]['metadata']['id']:
-    #     print(data[i])
-    #     break
 
-# keys_set = set()
 
-# with open("arxiv_metadata.ndjson", "r") as file:
-#     for line in file:
-#         data = json.loads(line.strip())
-#         # Recursive function to collect keys from nested dicts
-#         def collect_keys(d):
-#             if isinstance(d, dict):
-#                 for k, v in d.items():
-#                     keys_set.add(k)
-#                     collect_keys(v)
-#             elif isinstance(d, list):
-#                 for item in d:
-#                     collect_keys(item)
 
-#         collect_keys(data)
 
-# all_keys = sorted(keys_set)
-# print(all_keys)
+
+
+keys_set = set()
+
+with open("/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_paper_metadata/arxiv_metadata.ndjson", "r") as file:
+    for line in file:
+        data = json.loads(line.strip())
+        # Recursive function to collect keys from nested dicts
+        def collect_keys(d):
+            if isinstance(d, dict):
+                for k, v in d.items():
+                    keys_set.add(k)
+                    collect_keys(v)
+            elif isinstance(d, list):
+                for item in d:
+                    collect_keys(item)
+
+        collect_keys(data)
+
+all_keys = sorted(keys_set)
+print(all_keys)
 
 
 # import json
@@ -72,3 +78,35 @@ for i in range(len(data)):
 #         if len(duplicates) == 10:
 #             break
 #         # print(identifier)
+
+
+
+
+
+
+# def merge_dicts(dict1, dict2):
+#     """Merge two dictionaries recursively, combining keys."""
+#     for key, value in dict2.items():
+#         if key in dict1:
+#             if isinstance(dict1[key], dict) and isinstance(value, dict):
+#                 merge_dicts(dict1[key], value)
+#             # If values are not both dicts, keep the existing one (or handle conflicts as needed)
+#         else:
+#             dict1[key] = value
+#     return dict1
+
+# def get_full_structure_from_ndjson(file_path):
+#     combined_structure = {}
+#     with open(file_path, 'r') as f:
+#         for line in f:
+#             try:
+#                 json_obj = json.loads(line)
+#                 combined_structure = merge_dicts(combined_structure, json_obj)
+#             except json.JSONDecodeError:
+#                 pass  # or handle error
+#     return combined_structure
+
+# # Usage:
+# file_path = '/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_paper_metadata/arxiv_metadata.ndjson'
+# structure = get_full_structure_from_ndjson(file_path)
+# print(json.dumps(structure, indent=4))
