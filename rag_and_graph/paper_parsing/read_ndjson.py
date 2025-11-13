@@ -1,33 +1,16 @@
 import json
 from collections import Counter, defaultdict
 
-# with gzip.open('/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_.ndjson.gz', mode='rt', encoding='utf-8') as f:
-#     data = [json.loads(line) for line in f]
 
-# # 'data' will be a list of JSON objects (dictionaries)
-# print(f"Loaded {len(data)} records from the NDJSON file.")
-# print("First record:", data[0])
-
-# with open('/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_paper_metadata/arxiv_metadata.ndjson', 'r', encoding='utf-8') as f:
-#     data = [json.loads(line) for line in f]
-
-# # for key, value in data[200]['metadata'].items():  # Print first 5 records as a sample
-# for i in range(len(data)):
-#     # print(f"{key}: {value}")
-#     # print("-" * 40)
-#     # print(f"{key}: {value}")
-#     print(i)
-#     # if "Distraction-based neural networks for modeling documents" in data[i]['metadata']['title']:
-#     #     print(data[i])
-#     #     break
-#     if "610877" in data[i]['metadata']['id']:
-#         print(data[i])
-#         break
-#     # if "Evolutionary Policy Optimization" in data[i]['metadata']['title']:
-#     #     print(data[i])
-#     # if "1706.03762" in data[i]['metadata']['id']:
-#     #     print(data[i])
-#     #     break
+with open('/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_paper_metadata/arxiv_metadata.ndjson', 'r', encoding='utf-8') as f:
+    data = [json.loads(line) for line in f]
+for i in range(len(data)):
+    print(i)
+    if "1503.08895" in data[i]['metadata']['id']:
+        print(data[i])
+        break
+    # if "Evolutionary Policy Optimization" in data[i]['metadata']['title']:
+    #     print(data[i])
 
 
 
@@ -150,24 +133,24 @@ from collections import Counter, defaultdict
 
 
 
-def print_duplicate_titles_structure(ndjson_path):
-    seen_titles = {}
-    duplicates_found = 0
-    with open(ndjson_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            record = json.loads(line)
-            title = record.get("metadata", {}).get("title", None)
-            if title:
-                if title in seen_titles:
-                    # Print the first encountered duplicate structure (the original and the duplicate)
-                    print("Original entry:")
-                    print(json.dumps(seen_titles[title], indent=4))
-                    print("\nDuplicate entry:")
-                    print(json.dumps(record, indent=4))
-                    duplicates_found += 1
-                    if duplicates_found == 2:
-                        break
-                else:
-                    seen_titles[title] = record
-# Usage:
-print_duplicate_titles_structure("/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_paper_metadata/arxiv_metadata.ndjson")
+# def print_duplicate_titles_structure(ndjson_path):
+#     seen_titles = {}
+#     duplicates_found = 0
+#     with open(ndjson_path, 'r', encoding='utf-8') as f:
+#         for line in f:
+#             record = json.loads(line)
+#             title = record.get("metadata", {}).get("title", None)
+#             if title:
+#                 if title in seen_titles:
+#                     # Print the first encountered duplicate structure (the original and the duplicate)
+#                     print("Original entry:")
+#                     print(json.dumps(seen_titles[title], indent=4))
+#                     print("\nDuplicate entry:")
+#                     print(json.dumps(record, indent=4))
+#                     duplicates_found += 1
+#                     if duplicates_found == 2:
+#                         break
+#                 else:
+#                     seen_titles[title] = record
+# # Usage:
+# print_duplicate_titles_structure("/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_paper_metadata/arxiv_metadata.ndjson")
