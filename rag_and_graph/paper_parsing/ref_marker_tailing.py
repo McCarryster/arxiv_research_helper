@@ -1,5 +1,4 @@
-# grobid_parser.py
-from typing import List, Dict
+from typing import List, Dict, Optional
 import requests
 import xml.etree.ElementTree as ET
 
@@ -62,8 +61,11 @@ def assemble_name_from_author_el(author_el: ET.Element) -> str:
         return author_el.text.strip()
     return ""
 
-def parse_grobid_tei(tei_xml: str) -> List[Dict]:
-    """Parse TEI XML returned by GROBID into [{'title':..., 'authors_teiled':[...]}]."""
+def parse_grobid_tei(tei_xml: str, original_citation: Optional[str] = None) -> List[Dict]:
+    """
+    Parse TEI XML returned by GROBID into a list of dicts:
+    [{'title': ..., 'authors_teiled': [...], 'original_citation': ...}, ...]
+    """
     try:
         root = ET.fromstring(tei_xml)
     except ET.ParseError:
@@ -85,7 +87,7 @@ def parse_grobid_tei(tei_xml: str) -> List[Dict]:
         # Extract title
         for t in bibl.iter():
             if strip_ns(t.tag) == "title" and (t.text or "").strip():
-                title_text = t.text.strip() # type: ignore
+                title_text = t.text.strip()  # type: ignore
                 break
 
         # Extract authors
@@ -109,43 +111,44 @@ def parse_grobid_tei(tei_xml: str) -> List[Dict]:
 
         results.append({
             "title": title_text,
-            "authors_teiled": cleaned
+            "authors_teiled": cleaned,
+            "original_citation": original_citation or ""
         })
     return results
 
 def parse_mark_refs(citation_list: List[str], host: str = GROBID_BASE) -> List[Dict]:
     """
     Parse a list of citation strings via GROBID.
-    Returns [{'title': ..., 'authors_teiled': [...]}].
+    Returns [{'title': ..., 'authors_teiled': [...], 'original_citation': ...}, ...].
     """
     all_results: List[Dict] = []
     for citation in citation_list:
         try:
             tei = call_grobid_process_citation_list_single(citation, host)
-            parsed = parse_grobid_tei(tei)
+            parsed = parse_grobid_tei(tei, original_citation=citation)
             if parsed:
                 all_results.extend(parsed)
             else:
                 all_results.append({
                     "title": "",
                     "authors_teiled": [],
-                    "error": "No biblStruct parsed",
-                    "original_citation": citation
+                    "original_citation": citation,
+                    "error": "No biblStruct parsed"
                 })
         except requests.exceptions.RequestException as e:
             all_results.append({
                 "title": "",
                 "authors_teiled": [],
-                "error": str(e),
-                "original_citation": citation
+                "original_citation": citation,
+                "error": str(e)
             })
     return all_results
 
-# Optional: quick test when run directly
-if __name__ == "__main__":
-    test_citations = [
-        "[36] S. E. Robertson and S. Walker. Some simple effective approximations to the 2-poisson model for probabilistic weighted retrieval. pages 232–241. Springer-Verlag New York, Inc., 1994.",
-        "[15] S. P. Harter. A probabilistic approach to automatic keyword indexing. JASIS, 26(5):280–289, 1975."
-    ]
-    for item in parse_mark_refs(test_citations):
-        print({"authors_teiled": item["authors_teiled"], "title": item["title"]})
+# # Optional: quick test when run directly
+# if __name__ == "__main__":
+#     test_citations = [
+#         "[36] S. E. Robertson and S. Walker. Some simple effective approximations to the 2-poisson model for probabilistic weighted retrieval. pages 232–241. Springer-Verlag New York, Inc., 1994.",
+#         "[15] S. P. Harter. A probabilistic approach to automatic keyword indexing. JASIS, 26(5):280–289, 1975."
+#     ]
+#     for item in parse_mark_refs(test_citations):
+#         print({"authors_teiled": item["authors_teiled"], "title": item["title"]})

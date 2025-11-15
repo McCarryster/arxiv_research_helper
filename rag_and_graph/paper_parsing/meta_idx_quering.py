@@ -12,7 +12,6 @@ from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
-
 class ArxivMetaSearchDB:
     def __init__(self, PG: dict, pool_minconn: int = 1, pool_maxconn: int = 10):
         """
@@ -109,6 +108,42 @@ class ArxivMetaSearchDB:
         if authors is None:
             return []
         return [self.normalize_text(a) for a in authors]
+
+    # def prepare_queries(self, queries: List[dict]) -> List:
+    #     queries_to_run = []
+    #     for q in queries:
+    #         title_raw = q.get('title', '')
+    #         authors_raw = q.get('authors_teiled', [])
+    #         normalized_title = self.normalize_text(title_raw)
+    #         normalized_authors = self.normalize_author_list(authors_raw)
+    #         queries_to_run.append({
+    #             "normalized_title": normalized_title.replace(" ", ""),
+    #             "normalized_authors": normalized_authors,
+    #             "original_citation": None
+    #         })
+    #     return queries_to_run
+
+    def prepare_queries(self, queries: List[dict]) -> List[Dict[str, Any]]:
+        """
+        Build queries_to_run from incoming queries.
+        Each output dict contains:
+            - normalized_title: str (spaces removed)
+            - normalized_authors: List[str] or None
+            - original_citation: str or None (propagated from input)
+        """
+        queries_to_run: List[Dict[str, Any]] = []
+        for q in queries:
+            title_raw = q.get("title", "")
+            original_citation = q.get("original_citation") or q.get("raw", "")
+            authors_raw = q.get("authors_teiled", [])
+            normalized_title = self.normalize_text(title_raw)
+            normalized_authors = self.normalize_author_list(authors_raw)
+            queries_to_run.append({
+                    "original_citation": original_citation,
+                    "normalized_title": normalized_title.replace(" ", ""),
+                    "normalized_authors": normalized_authors,
+                })
+        return queries_to_run
 
     # -------------------------
     # Schema + index creation
@@ -363,7 +398,7 @@ class ArxivMetaSearchDB:
     # -------------------------
     # Main search function (thread-safe)
     # -------------------------
-    def search_paper(self, glued_normalized_title: str, query_authors: Optional[List[str]] = None) -> Any:
+    def search_paper(self, original_citation: str, glued_normalized_title: str, query_authors: Optional[List[str]]=None) -> Any:
         """
         Thread-safe search: borrows a connection from the pool for each call.
 
@@ -502,7 +537,8 @@ class ArxivMetaSearchDB:
             if exact_rows:
                 best = _best_candidate_by_authors(exact_rows, cols, query_authors)
                 if best:
-                    return best
+                    # return best
+                    return {original_citation: best}
                 return False
 
             # 2) trigram similarity fallback (if available)
@@ -535,7 +571,8 @@ class ArxivMetaSearchDB:
 
             best = _best_candidate_by_authors(trig_rows, cols, query_authors)
             if best:
-                return best
+                # return best
+                return {original_citation: best}
             return False
 
     # -------------------------
@@ -559,105 +596,134 @@ class ArxivMetaSearchDB:
 def run_searches_multithreaded(searcher: ArxivMetaSearchDB, queries_to_run: List[Dict[str, Any]], max_workers: int = 8):
     """
     queries_to_run: list of dicts with keys:
+        - original_citation (original string)
         - normalized_title (glued_normalized_title)
         - normalized_authors (list of normalized author strings) or None
-
-    Prints results as they complete and returns list of results.
     """
     results = []
-    start = time.time()
+    # start = time.time()
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        future_to_query = {
-            ex.submit(searcher.search_paper, q["normalized_title"], q.get("normalized_authors")): q
-            for q in queries_to_run
-        }
+        future_to_query = {ex.submit(searcher.search_paper, q["original_citation"], q["normalized_title"], q.get("normalized_authors")): q for q in queries_to_run}
         for fut in tqdm(as_completed(future_to_query), total=len(future_to_query), desc="Searching", unit="q"):
             q = future_to_query[fut]
             try:
                 res = fut.result()
             except Exception as e:
                 res = {"error": str(e), "query": q}
-            print(res)
-            print("-" * 80)
-            results.append(res)
+            # print(res)
+            # print("-" * 80)
+            if res:
+                results.append(res)
 
-    elapsed = time.time() - start
-    print(f"Completed {len(results)} searches in {elapsed:.2f}s")
-    return results
+    # elapsed = time.time() - start
+    # print(f"Completed {len(results)} searches in {elapsed:.2f}s")
+    result = {k: v for d in results for k, v in d.items()}
+    return result
 
-if __name__ == "__main__":
-    ndjson_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_paper_metadata/arxiv_metadata.ndjson"
-    PG = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "arxiv_meta_db_5",
-    "user": "postgres",
-    "password": "@Q_Fa;ml$f!@94r"
-    }
 
-    searcher = ArxivMetaSearchDB(PG, pool_minconn=1, pool_maxconn=20)
-    # searcher.build_db(ndjson_path, dry_run=False)
 
-    # Prepare normalized queries for batch search
-    queries = [
-        {'title': 'Can active memory replace attention?', 'authors_teiled': ['Łukasz Kaiser', 'Samy Bengio']}, # True
-        {'title': 'Deep residual learning for im- age recognition', 'authors_teiled': ['Kaiming He', 'Xiangyu Zhang', 'Shaoqing Ren', 'Jian Sun']}, # True
-        {'title': 'Gradient flow in recurrent nets: the difficulty of learning long-term dependencies', 'authors_teiled': ['Sepp Hochreiter', 'Yoshua Bengio', 'Paolo Frasconi', 'Jürgen Schmidhuber']}, # False
-        {'title': 'Adam: A method for stochastic optimization', 'authors_teiled': ['Diederik Kingma', 'Jimmy Ba']},
-        {'title': 'Neural machine translation of rare words with subword units', 'authors_teiled': ['Rico Sennrich', 'Barry Haddow', 'Alexandra Birch']},
-        {'title': 'Grammar as a foreign language', 'authors_teiled': ['Vinyals', 'Koo Kaiser', 'Petrov', 'Sutskever', 'Hinton']},
-        {'title': 'Generating sequences with recurrent neural networks', 'authors_teiled': ['Alex Graves']},
-        {'title': 'Using the output embedding to improve language models', 'authors_teiled': ['Ofir Press', 'Lior Wolf']},
-        {'title': 'Convolu- tional sequence to sequence learning', 'authors_teiled': ['Jonas Gehring', 'Michael Auli', 'David Grangier', 'Denis Yarats', 'Yann N Dauphin']},
-        {'title': 'Massive exploration of neural machine translation architectures', 'authors_teiled': ['Denny Britz', 'Anna Goldie', 'Minh-Thang Luong', 'V Quoc', 'Le']},
-        {'title': 'Sequence to sequence learning with neural networks', 'authors_teiled': ['Ilya Sutskever', 'Oriol Vinyals', 'Quoc Vv Le']},
-        {'title': 'Long short-term memory', 'authors_teiled': ['Sepp Hochreiter', 'Jürgen Schmidhuber']},
-        {'title': 'Learning accurate, compact, and interpretable tree annotation', 'authors_teiled': ['Slav Petrov', 'Leon Barrett', 'Romain Thibaux', 'Dan Klein']},
-        {'title': 'End-to-end memory networks', 'authors_teiled': ['Sainbayar Sukhbaatar', 'Arthur Szlam', 'Jason Weston', 'Rob Fergus', 'C Cortes', 'N D Lawrence', 'D D Lee', 'M Sugiyama', 'R Garnett']},
-        {'title': 'Factorization tricks for LSTM networks', 'authors_teiled': ['Oleksii Kuchaiev', 'Boris Ginsburg']},
-        {'title': 'A decomposable attention model', 'authors_teiled': ['Ankur Parikh', 'Oscar Täckström', 'Dipanjan Das', 'Jakob Uszkoreit']},
-        {'title': 'Neural GPUs learn algorithms', 'authors_teiled': ['Łukasz Kaiser', 'Ilya Sutskever']},
-        {'title': 'Google’s neural machine translation system: Bridging the gap between human and machine translation', 'authors_teiled': ['Yonghui Wu', 'Mike Schuster', 'Zhifeng Chen', 'V Quoc', 'Mohammad Le', 'Wolfgang Norouzi', 'Maxim Macherey', 'Yuan Krikun', 'Qin Cao', 'Klaus Gao', 'Macherey']},
-        {'title': 'Effective approaches to attention- based neural machine translation', 'authors_teiled': ['Minh-Thang Luong', 'Hieu Pham', 'Christopher D Manning']},
-        {'title': 'Long short-term memory-networks for machine reading', 'authors_teiled': ['Jianpeng Cheng', 'Li Dong', 'Mirella Lapata']},
-        {'title': 'Neural machine translation by jointly learning to align and translate', 'authors_teiled': ['Dzmitry Bahdanau', 'Kyunghyun Cho', 'Yoshua Bengio']},
-        {'title': 'Outrageously large neural networks: The sparsely-gated mixture-of-experts layer', 'authors_teiled': ['Noam Shazeer', 'Azalia Mirhoseini', 'Krzysztof Maziarz', 'Andy Davis', 'Quoc Le', 'Geoffrey Hinton', 'Jeff Dean']},
-        {'title': 'Exploring the limits of language modeling', 'authors_teiled': ['Rafal Jozefowicz', 'Oriol Vinyals', 'Mike Schuster', 'Noam Shazeer', 'Yonghui Wu']},
-        {'title': 'A structured self-attentive sentence embedding', 'authors_teiled': ['Zhouhan Lin', 'Minwei Feng', 'Cicero Nogueira Dos Santos', 'Mo Yu', 'Bing Xiang', 'Bowen Zhou', 'Yoshua Bengio']},
-        {'title': 'Empirical evaluation of gated recurrent neural networks on sequence modeling', 'authors_teiled': ['Junyoung Chung', 'Çaglar Gülçehre', 'Kyunghyun Cho', 'Yoshua Bengio']},
-        {'title': 'Dropout: a simple way to prevent neural networks from overfitting', 'authors_teiled': ['Nitish Srivastava', 'Geoffrey E Hinton', 'Alex Krizhevsky', 'Ilya Sutskever', 'Ruslan Salakhutdi- Nov']},
-        {'title': 'Layer normalization', 'authors_teiled': ['Jimmy Lei Ba', 'Jamie Ryan Kiros', 'Geoffrey E Hinton']},
-        {'title': 'Recurrent neural network grammars', 'authors_teiled': ['Chris Dyer', 'Adhiguna Kuncoro', 'Miguel Ballesteros', 'Noah A Smith']},
-        {'title': 'Rethinking the inception architecture for computer vision', 'authors_teiled': ['Christian Szegedy', 'Vincent Vanhoucke', 'Sergey Ioffe', 'Jonathon Shlens', 'Zbigniew Wojna']},
-        {'title': 'Building a large annotated corpus of english: The penn treebank', 'authors_teiled': ['Mary Mitchell P Marcus', 'Ann Marcinkiewicz', 'Beatrice Santorini']},
-        {'title': 'Neural machine translation in linear time', 'authors_teiled': ['Nal Kalchbrenner', 'Lasse Espeholt', 'Karen Simonyan', 'Aaron Van Den Oord', 'Alex Graves', 'Ko- Ray Kavukcuoglu']},
-        {'title': 'Structured attention networks', 'authors_teiled': ['Yoon Kim', 'Carl Denton', 'Luong Hoang', 'Alexander M Rush']},
-        {'title': 'Xception: Deep learning with depthwise separable convolutions', 'authors_teiled': ['Francois Chollet']},
-        {'title': 'Learning phrase representations using rnn encoder-decoder for statistical machine translation', 'authors_teiled': ['Kyunghyun Cho', 'Bart Van Merrienboer', 'Caglar Gulcehre', 'Fethi Bougares', 'Holger Schwenk', 'Yoshua Bengio']},
-        {'title': 'A deep reinforced model for abstractive summarization', 'authors_teiled': ['Romain Paulus', 'Caiming Xiong', 'Richard Socher']},
-    ]
-    queries_to_run = []
-    for q in queries:
-        title_raw = q.get('title', '')
-        authors_raw = q.get('authors_teiled', [])
-        normalized_title = searcher.normalize_text(title_raw)
-        normalized_authors = searcher.normalize_author_list(authors_raw)
-        queries_to_run.append({
-            "normalized_title": normalized_title.replace(" ", ""),
-            "normalized_authors": normalized_authors
-        })
+# def run_searches_multithreaded(searcher: ArxivMetaSearchDB, queries_to_run: List[Dict[str, Any]], max_workers: int = 8):
+#     """
+#     queries_to_run: list of dicts with keys:
+#         - normalized_title (glued_normalized_title)
+#         - normalized_authors (list of normalized author strings) or None
 
-    # Run in parallel and print results
-    try:
-        results = run_searches_multithreaded(searcher, queries_to_run, max_workers=20)
-    finally:
-        # always close pool + connections
-        searcher.close()
+#     Prints results as they complete and returns list of results.
+#     """
+#     results = []
+#     start = time.time()
+#     with ThreadPoolExecutor(max_workers=max_workers) as ex:
+#         future_to_query = {
+#             ex.submit(searcher.search_paper, q["normalized_title"], q.get("normalized_authors")): q
+#             for q in queries_to_run
+#         }
+#         for fut in tqdm(as_completed(future_to_query), total=len(future_to_query), desc="Searching", unit="q"):
+#             q = future_to_query[fut]
+#             try:
+#                 res = fut.result()
+#             except Exception as e:
+#                 res = {"error": str(e), "query": q}
+#             print(res)
+#             print("-" * 80)
+#             results.append(res)
 
-    # for query in queries_to_run:
-    #     print(query['normalized_title'])
-    #     # print(query['normalized_authors'])
-    #     # break
-    #     # print(searcher.search_paper(query['normalized_title'], similarity_threshold=0.35))
-    #     print(searcher.search_paper(query['normalized_title'], query['normalized_authors']))
-    #     print('-'*100)
+#     elapsed = time.time() - start
+#     print(f"Completed {len(results)} searches in {elapsed:.2f}s")
+#     return results
+
+# if __name__ == "__main__":
+#     ndjson_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_paper_metadata/arxiv_metadata.ndjson"
+#     PG = {
+#     "host": "localhost",
+#     "port": 5432,
+#     "dbname": "arxiv_meta_db_5",
+#     "user": "postgres",
+#     "password": "@Q_Fa;ml$f!@94r"
+#     }
+
+#     searcher = ArxivMetaSearchDB(PG, pool_minconn=1, pool_maxconn=20)
+#     # searcher.build_db(ndjson_path, dry_run=False)
+
+#     # Prepare normalized queries for batch search
+#     queries = [
+#         {'title': 'Can active memory replace attention?', 'authors_teiled': ['Łukasz Kaiser', 'Samy Bengio']}, # True
+#         {'title': 'Deep residual learning for im- age recognition', 'authors_teiled': ['Kaiming He', 'Xiangyu Zhang', 'Shaoqing Ren', 'Jian Sun']}, # True
+#         {'title': 'Gradient flow in recurrent nets: the difficulty of learning long-term dependencies', 'authors_teiled': ['Sepp Hochreiter', 'Yoshua Bengio', 'Paolo Frasconi', 'Jürgen Schmidhuber']}, # False
+#         {'title': 'Adam: A method for stochastic optimization', 'authors_teiled': ['Diederik Kingma', 'Jimmy Ba']},
+#         {'title': 'Neural machine translation of rare words with subword units', 'authors_teiled': ['Rico Sennrich', 'Barry Haddow', 'Alexandra Birch']},
+#         {'title': 'Grammar as a foreign language', 'authors_teiled': ['Vinyals', 'Koo Kaiser', 'Petrov', 'Sutskever', 'Hinton']},
+#         {'title': 'Generating sequences with recurrent neural networks', 'authors_teiled': ['Alex Graves']},
+#         {'title': 'Using the output embedding to improve language models', 'authors_teiled': ['Ofir Press', 'Lior Wolf']},
+#         {'title': 'Convolu- tional sequence to sequence learning', 'authors_teiled': ['Jonas Gehring', 'Michael Auli', 'David Grangier', 'Denis Yarats', 'Yann N Dauphin']},
+#         {'title': 'Massive exploration of neural machine translation architectures', 'authors_teiled': ['Denny Britz', 'Anna Goldie', 'Minh-Thang Luong', 'V Quoc', 'Le']},
+#         {'title': 'Sequence to sequence learning with neural networks', 'authors_teiled': ['Ilya Sutskever', 'Oriol Vinyals', 'Quoc Vv Le']},
+#         {'title': 'Long short-term memory', 'authors_teiled': ['Sepp Hochreiter', 'Jürgen Schmidhuber']},
+#         {'title': 'Learning accurate, compact, and interpretable tree annotation', 'authors_teiled': ['Slav Petrov', 'Leon Barrett', 'Romain Thibaux', 'Dan Klein']},
+#         {'title': 'End-to-end memory networks', 'authors_teiled': ['Sainbayar Sukhbaatar', 'Arthur Szlam', 'Jason Weston', 'Rob Fergus', 'C Cortes', 'N D Lawrence', 'D D Lee', 'M Sugiyama', 'R Garnett']},
+#         {'title': 'Factorization tricks for LSTM networks', 'authors_teiled': ['Oleksii Kuchaiev', 'Boris Ginsburg']},
+#         {'title': 'A decomposable attention model', 'authors_teiled': ['Ankur Parikh', 'Oscar Täckström', 'Dipanjan Das', 'Jakob Uszkoreit']},
+#         {'title': 'Neural GPUs learn algorithms', 'authors_teiled': ['Łukasz Kaiser', 'Ilya Sutskever']},
+#         {'title': 'Google’s neural machine translation system: Bridging the gap between human and machine translation', 'authors_teiled': ['Yonghui Wu', 'Mike Schuster', 'Zhifeng Chen', 'V Quoc', 'Mohammad Le', 'Wolfgang Norouzi', 'Maxim Macherey', 'Yuan Krikun', 'Qin Cao', 'Klaus Gao', 'Macherey']},
+#         {'title': 'Effective approaches to attention- based neural machine translation', 'authors_teiled': ['Minh-Thang Luong', 'Hieu Pham', 'Christopher D Manning']},
+#         {'title': 'Long short-term memory-networks for machine reading', 'authors_teiled': ['Jianpeng Cheng', 'Li Dong', 'Mirella Lapata']},
+#         {'title': 'Neural machine translation by jointly learning to align and translate', 'authors_teiled': ['Dzmitry Bahdanau', 'Kyunghyun Cho', 'Yoshua Bengio']},
+#         {'title': 'Outrageously large neural networks: The sparsely-gated mixture-of-experts layer', 'authors_teiled': ['Noam Shazeer', 'Azalia Mirhoseini', 'Krzysztof Maziarz', 'Andy Davis', 'Quoc Le', 'Geoffrey Hinton', 'Jeff Dean']},
+#         {'title': 'Exploring the limits of language modeling', 'authors_teiled': ['Rafal Jozefowicz', 'Oriol Vinyals', 'Mike Schuster', 'Noam Shazeer', 'Yonghui Wu']},
+#         {'title': 'A structured self-attentive sentence embedding', 'authors_teiled': ['Zhouhan Lin', 'Minwei Feng', 'Cicero Nogueira Dos Santos', 'Mo Yu', 'Bing Xiang', 'Bowen Zhou', 'Yoshua Bengio']},
+#         {'title': 'Empirical evaluation of gated recurrent neural networks on sequence modeling', 'authors_teiled': ['Junyoung Chung', 'Çaglar Gülçehre', 'Kyunghyun Cho', 'Yoshua Bengio']},
+#         {'title': 'Dropout: a simple way to prevent neural networks from overfitting', 'authors_teiled': ['Nitish Srivastava', 'Geoffrey E Hinton', 'Alex Krizhevsky', 'Ilya Sutskever', 'Ruslan Salakhutdi- Nov']},
+#         {'title': 'Layer normalization', 'authors_teiled': ['Jimmy Lei Ba', 'Jamie Ryan Kiros', 'Geoffrey E Hinton']},
+#         {'title': 'Recurrent neural network grammars', 'authors_teiled': ['Chris Dyer', 'Adhiguna Kuncoro', 'Miguel Ballesteros', 'Noah A Smith']},
+#         {'title': 'Rethinking the inception architecture for computer vision', 'authors_teiled': ['Christian Szegedy', 'Vincent Vanhoucke', 'Sergey Ioffe', 'Jonathon Shlens', 'Zbigniew Wojna']},
+#         {'title': 'Building a large annotated corpus of english: The penn treebank', 'authors_teiled': ['Mary Mitchell P Marcus', 'Ann Marcinkiewicz', 'Beatrice Santorini']},
+#         {'title': 'Neural machine translation in linear time', 'authors_teiled': ['Nal Kalchbrenner', 'Lasse Espeholt', 'Karen Simonyan', 'Aaron Van Den Oord', 'Alex Graves', 'Ko- Ray Kavukcuoglu']},
+#         {'title': 'Structured attention networks', 'authors_teiled': ['Yoon Kim', 'Carl Denton', 'Luong Hoang', 'Alexander M Rush']},
+#         {'title': 'Xception: Deep learning with depthwise separable convolutions', 'authors_teiled': ['Francois Chollet']},
+#         {'title': 'Learning phrase representations using rnn encoder-decoder for statistical machine translation', 'authors_teiled': ['Kyunghyun Cho', 'Bart Van Merrienboer', 'Caglar Gulcehre', 'Fethi Bougares', 'Holger Schwenk', 'Yoshua Bengio']},
+#         {'title': 'A deep reinforced model for abstractive summarization', 'authors_teiled': ['Romain Paulus', 'Caiming Xiong', 'Richard Socher']},
+#     ]
+#     queries_to_run = []
+#     for q in queries:
+#         title_raw = q.get('title', '')
+#         authors_raw = q.get('authors_teiled', [])
+#         normalized_title = searcher.normalize_text(title_raw)
+#         normalized_authors = searcher.normalize_author_list(authors_raw)
+#         queries_to_run.append({
+#             "normalized_title": normalized_title.replace(" ", ""),
+#             "normalized_authors": normalized_authors
+#         })
+
+#     # Run in parallel and print results
+#     try:
+#         results = run_searches_multithreaded(searcher, queries_to_run, max_workers=20)
+#     finally:
+#         # always close pool + connections
+#         searcher.close()
+
+#     # for query in queries_to_run:
+#     #     print(query['normalized_title'])
+#     #     # print(query['normalized_authors'])
+#     #     # break
+#     #     # print(searcher.search_paper(query['normalized_title'], similarity_threshold=0.35))
+#     #     print(searcher.search_paper(query['normalized_title'], query['normalized_authors']))
+#     #     print('-'*100)
