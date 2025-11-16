@@ -1,13 +1,3 @@
-"""
-Print only matched authors from a provided author-list against a text.
-
-Just paste and run. No CLI/argparse used.
-
-Example output (for the provided example):
-M.-T Luong
-Sébastien Jean
-"""
-
 from typing import List, Dict
 import unicodedata
 import re

@@ -46,6 +46,18 @@ def num_tokens_from_string(string: str, encoding_name: str) -> int:
     num_tokens = len(encoding.encode(string))
     return num_tokens
 
+def match_name(name: str, name_list: List[str]) -> bool:
+    """Match a name with a list of names ignoring order of first and last names."""
+    # Normalize the input name (lowercase and split)
+    name_parts = set(name.lower().split())
+
+    # Check against each name in the list
+    for candidate in name_list:
+        candidate_parts = set(candidate.lower().split())
+        if name_parts == candidate_parts:
+            return True
+    return False
+
 # def string_checksum_md5(input_string: str) -> str:
 #     # Create MD5 hash object
 #     md5_hash = hashlib.md5()
@@ -129,7 +141,7 @@ seen_refs = set()              # cache refs
 for i, section in enumerate(sections): # type: ignore
     section_found_refs = []
     # {"[7] Junyoung Chung, Çaglar Gülçehre, Kyunghyun Cho, and Yoshua Bengio. Empirical evaluation of gated recurrent neural networks on sequence modeling. CoRR, abs/1412.3555, 2014.": {'id': 772930, 'arxiv_id': '1412.3555', 'title': 'Empirical Evaluation of Gated Recurrent Neural Networks on Sequence Modeling', 'normalized_title': 'empirical evaluation of gated recurrent neural networks on sequence modeling', 'normalized_authors': ['bengio yoshua', 'cho kyunghyun', 'chung junyoung', 'gulcehre caglar'], 'title_and_authors': 'Empirical Evaluation of Gated Recurrent Neural Networks on Sequence Modeling | bengio yoshua, cho kyunghyun, chung junyoung, gulcehre caglar', 'created_date': datetime.date(2014, 12, 11)}}
-    # print(section)
+    print(section)
     print("#"*100)
     print(f"use_markers={use_markers}")
     print("#"*100)
@@ -156,109 +168,43 @@ for i, section in enumerate(sections): # type: ignore
         else:
             print('SOMETHING IS SHIT')
             break
-
-        if not seen_refs:
-            for section in sections: # type: ignore
-                refs = match_refs_by_marker(pdf_path, section, as_list=True)
-                refs = refs['reference_mapping']
-                # refs = set(refs)
-                seen_refs.update(refs)
-            seen_refs = {s for s in seen_refs if "Reference not found" not in s}
-            refs_tailed = parse_mark_refs(seen_refs) # type: ignore
-            for ref in refs_tailed:
-                print(f"{ref},")
-            break
-            parallel_results = search_papers_parallel(refs_tailed, db_path, top_k=top_k, use_authors=use_authors, max_workers=max_workers)
-                # cache_arxiv_found_refs[]
-            # print(parallel_results[0])
-            for i, p_res in enumerate(parallel_results):
-                print(i+1, p_res[0]['arxiv_id'], p_res[0]['title'], p_res[0]['authors']) # type: ignore
-                print('-'*100)
-        break
-
-        refs = match_refs_by_marker(pdf_path, section, as_list=True)
-
-
-
-
-        # for seen_ref in filtered_set:
-        #     print(seen_ref)
-        #     print('-'*100)
-        # break
-        # for i, ref in enumerate(refs_tailed):
-        #     print(f"{ref},")
-        print('^'*100)
-        # print(parallel_results)
-        for i, res in enumerate(parallel_results):
-            if res:
-                print(i+1, res[0]['arxiv_id'], res[0]['title'], res[0]['authors']) # type: ignore
-            else:
-                print(i, "[NOT FOUND]")
-            print("-"*100)
-        
-            # tailed_ref = parse_mark_ref(ref)
-            # print(f"{ref},")
-            # print({"authors_teiled": tailed_ref["authors_teiled"], "title": tailed_ref["title"]})
-            # if ref not in cache_arxiv_found_refs:
-            # matched_refs.append(ref)
-        # MAKE A GROBID TO A REF STRING TO MAKE IT STRUCTURED
-
     else:           # If 3.1. b) If author names as links to refs like "(Luong et al., 2015)" and other variants -> use GROBID to find all refs
-        
         if not cache_arxiv_found_refs:
-        
-            refs_content = find_refs(pdf_path)                                    # grobid parse to find of references
-            refs_only = [ref['raw'] for ref in refs_content]                      # take only raw references from grobid content
-        authors_only = [ref['authors_teiled'][0] for ref in refs_content]         # take only authors from grobid content
-        print()
-        section_authors = get_matched_authors(authors_only, section['text'])      # find section
-        section_authors = searcher.normalize_author_list(section_authors)
-        print("#"*100)
-        print("section_authors", section_authors)
-        print("#"*100)
-        cleared_refs = deduplicate_refs(refs_only)
-        cleared_refs_set = set(cleared_refs)
-        filtered_refs = [ref for ref in refs_content if ref['raw'] in cleared_refs_set]
-        
-        queries = searcher.prepare_queries(filtered_refs)
-        try:
-            cache_arxiv_found_refs = run_searches_multithreaded(searcher, queries, max_workers=max_workers)
-        finally:
-            searcher.close()
-        
-        for key, val in cache_arxiv_found_refs.items():
-            print(key, "|||", val['normalized_authors'])
-            print('-'*100)
-        
+            refs_content = find_refs(pdf_path)                                          # grobid parse to find of references
+            refs_only = [ref['raw'] for ref in refs_content]                            # take only raw references from grobid content
+            authors_only = [ref['authors_teiled'][0] for ref in refs_content]           # take only first author from each extracted ref (coz citation start with that)
 
+            section_authors = get_matched_authors(authors_only, section['text'])        # find section authors that match
+            section_authors = searcher.normalize_author_list(section_authors)           # normalize for db search
+            print("#"*100)
+            print("section_authors", section_authors)
+            print("#"*100)
+            cleared_refs = set(deduplicate_refs(refs_only))                             # cleaning refs
+            filtered_refs = [ref for ref in refs_content if ref['raw'] in cleared_refs] # filtering
+            queries = searcher.prepare_queries(filtered_refs)                           # prepare for db search (original_citation, normalized_title, normalized_authors)
 
-
-
-
-        # for i, ref in enumerate(cache_arxiv_found_refs):
-        #     # -------------------------------REMOVE
-        #     # checks = {'title': ref['title'], 'authors_teiled': ref['authors_teiled']}
-        #     # print(ref)
-        #     # print(f"`{checks}`,")
-        #     print(ref)
-        #     # break
-        #     # -------------------------------REMOVE
-
-
-
-            # resp = find_arxiv(ref)
-            # # print(resp)
-            # if resp:
-            #     cache_arxiv_found_refs[ref['raw']] = (extract_arxiv_id(resp.get('id')), resp.get('title')) # type: ignore
-            # else:
-            #     cache_arxiv_found_refs[ref['raw']] = (None, ref['raw'])
-            # # print(cache_arxiv_found_refs)
-            # if ref['authors_teiled'][0] in section_authors:
-            #     # print("g+", i+1, ref['authors_teiled'][0], "|", ref['raw'])
-            #     # print("-"*100)
-            #     matched_refs.append(ref['raw'])
-
+            # Actual multi threaded search
+            try:
+                cache_arxiv_found_refs = run_searches_multithreaded(searcher, queries, max_workers=max_workers)
+            finally:
+                searcher.close()
+            print('cache_arxiv_found_refs', len(cache_arxiv_found_refs))
+        if cache_arxiv_found_refs:
+            # if someone from section_authors is in cache_arxiv_found_refs
+            for key, val in cache_arxiv_found_refs.items():
+                # # print(key, "|||", val['normalized_authors'])
+                # print(val['normalized_title'])
+                # print(searcher.normalize_text(searcher.format_authors(val['metadata']['authors']['author'])[0]))
+                # # print(val['metadata']['authors']['author'])
+                # print('-'*100)
+                searched_name = searcher.normalize_text(searcher.format_authors(val['metadata']['authors']['author'])[0])
+                check = match_name(searched_name, section_authors)
+                if check:
+                    section_found_refs.append(val)
+    print(len(section_found_refs)) # TEST CHECK LENGTH FOR EVERY SECTION
     break
+
+sys.exit()
 
 end_time = time.time()
 print(f"Total time taken for the loop: {end_time - start_time} seconds")

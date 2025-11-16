@@ -127,9 +127,9 @@ class ArxivMetaSearchDB:
         """
         Build queries_to_run from incoming queries.
         Each output dict contains:
+            - original_citation: str or None (propagated from input)
             - normalized_title: str (spaces removed)
             - normalized_authors: List[str] or None
-            - original_citation: str or None (propagated from input)
         """
         queries_to_run: List[Dict[str, Any]] = []
         for q in queries:
@@ -523,6 +523,7 @@ class ArxivMetaSearchDB:
                     normalized_title,
                     normalized_authors,
                     title_and_authors,
+                    metadata,
                     created_date
                 FROM PAPERS
                 WHERE glued_normalized_title = %s
@@ -552,6 +553,7 @@ class ArxivMetaSearchDB:
                         normalized_title,
                         normalized_authors,
                         title_and_authors,
+                        metadata,
                         created_date
                     FROM PAPERS
                     WHERE glued_normalized_title % %s
