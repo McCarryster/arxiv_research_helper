@@ -24,6 +24,8 @@ from typing import List, Dict, Any
 
 # TODO
     # 1. Add tqdm for grobid pdf processing
+    # 2. ???? Remake function that divides pdf into sections
+    # 3. 
 
 PG = {
 "host": "localhost",
@@ -77,25 +79,25 @@ def extract_arxiv_id(input_str: str) -> str:
 
 
 pdf_paths = [
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1308.0850v5.pdf", # markers
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1508.04025v5.pdf",
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1508.07909v5.pdf",
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1511.06114v4.pdf",
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1601.06733v7.pdf",
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1602.02410v2.pdf",
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1607.06450v1.pdf",
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1608.05859v3.pdf",
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1609.08144v2.pdf", # markers
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1610.02357v3.pdf", # markers
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1610.10099v2.pdf",
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1701.06538v1.pdf",
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1703.03130v1.pdf",
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1703.10722v3.pdf",
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1705.03122v3.pdf",
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1705.04304v3.pdf",
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1308.0850v5.pdf", # markers
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1508.04025v5.pdf",
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1508.07909v5.pdf",
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1511.06114v4.pdf",
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1601.06733v7.pdf",
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1602.02410v2.pdf",
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1607.06450v1.pdf",
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1608.05859v3.pdf",
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1609.08144v2.pdf", # markers
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1610.02357v3.pdf", # markers
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1610.10099v2.pdf",
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1701.06538v1.pdf",
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1703.03130v1.pdf",
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1703.10722v3.pdf",
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1705.03122v3.pdf",
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1705.04304v3.pdf",
     "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1706.03762v7.pdf", # markers
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1512.05287v5.pdf", # markers
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1602.01137v1.pdf", # markers
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1512.05287v5.pdf", # markers
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1602.01137v1.pdf", # markers
 ]
 
 # GROBID USE
@@ -174,7 +176,7 @@ searcher = ArxivMetaSearchDB(PG, pool_minconn=1, pool_maxconn=20)
 #         print('#'*120)
 #         break
 
-final = []
+
 
 example = {
     "9999.9999": {
@@ -209,9 +211,11 @@ example = {
             #     "embedding_id": "weaviate_uuid_7f8a9c"
             # }})
 start_time = time.time()
+results = []
 # 1 paper level
 for sections, refs, use_markers, pdf_path, arxiv_id in prepared_secs:
     section_found_refs = []
+    final_chunks = []
     # numbered citations
     if use_markers:
         print('wtf', use_markers)
@@ -230,7 +234,7 @@ for sections, refs, use_markers, pdf_path, arxiv_id in prepared_secs:
             #     print(sfr)
             #     print('&'*120)
 
-            final.append({
+            final_chunks.append({
                 "arxiv_id": arxiv_id,
                 "chunk_id": str(uuid.uuid4()),
                 "section_name": sec['section'],
@@ -269,7 +273,7 @@ for sections, refs, use_markers, pdf_path, arxiv_id in prepared_secs:
                         # print(item)
                         # print('-'*100)
 
-            final.append({
+            final_chunks.append({
                 "arxiv_id": arxiv_id,
                 "chunk_id": str(uuid.uuid4()),
                 "section_name": sec['section'],
@@ -284,21 +288,101 @@ for sections, refs, use_markers, pdf_path, arxiv_id in prepared_secs:
                 "uses_markers": False
             })
             section_found_refs = []
+
+    results.append(final_chunks)
+
 end_time = time.time()
 print(f"Total time taken for preparing {len(pdf_paths)} pdfs: {end_time - start_time} seconds")
 
-lens = []
-for f in final:
-    if not f['uses_markers']:
-        # print(f['arxiv_id'], f['token_len'])
-        # print()
-        # print(f['section_name'])
-        # print()
-        # print(len(f['citations']), f['citations'])
-        # print("'"*120)
-        # lens.append(len(f['citations']))
-        print(f)
-        print(len(f['citations']))
-        print("'"*120)
-
+# lens = []
+# for f in results:
+#     # if not f['uses_markers']:
+#         # print(f['arxiv_id'], f['token_len'])
+#         # print()
+#         # print(f['section_name'])
+#         # print()
+#         # print(len(f['citations']), f['citations'])
+#         # print("'"*120)
+#         # lens.append(len(f['citations']))
+#         print(f)
+#         print(len(f['citations']))
+#         print("'"*120)
 # print(lens)
+
+for r in results:
+    print(r)
+    print('+'*120)
+
+print(len(results))
+
+
+
+
+
+
+# single_ready_to_embed_paper = {
+#   "paper_id": "1234.56789",
+#   "title": "Example Research Paper Title",
+#   "authors": [
+#     {"name": "Author One", "affiliation": "Institution A"},
+#     {"name": "Author Two", "affiliation": "Institution B"}
+#     ],
+#   "abstract": "This is the abstract of the paper.",
+#   "publication_year": 2024,
+#   "chunks": [
+#     {
+#       "chunk_id": "chunk_1",
+#       "text": "This is the first chunk of the paper text ...",
+#       "embedding": [0.12, -0.34, 0.56, ..., 0.78],
+#       "citations": [
+#         {
+#           "citation_text": "[1]",
+#           "reference_id": "arxiv:9876.54321",
+#           "context": "This chunk discusses related work from [1]..."
+#         }
+#       ]
+#     },
+#     {
+#       "chunk_id": "chunk_2",
+#       "text": "This is the second chunk of the paper text ...",
+#       "embedding": [0.23, -0.45, 0.67, ..., 0.89],
+#       "citations": [
+#         {
+#           "citation_text": "[2]",
+#           "reference_id": "arxiv:1122.33445",
+#           "context": "Further explanation referencing [2] in this section..."
+#         }
+#       ]
+#     }
+#   ],
+#   "chunks_ok": [
+#         "chunk_id": "ac99312f-0fea-4349-a701-7cf18beab5c7",
+#         "section_name": "...",
+#         "chunk_text": "...",
+#         "token_len": 999,
+#         "is_citation_context": True,
+#         "citations": [
+#             {"arxiv_id": "7777.7777", "title": "...", "authors": ["author name 3", "author name 2"]},
+#             {"arxiv_id": "6666.6666", "title": "...", "authors": ["author name 3", "author name 2"]},
+#             ],
+#         "start_offset": 0,
+#         "end_offset": 412,
+#         "checksum": "070a64ea183a6872555ad89f9e43e89a132dbc10cea79ddbe4b72202fb76b313",
+#         "embedding_id": "weaviate_uuid_7f8a9c"],
+#   "references": [
+#     {
+#       "reference_id": "arxiv:9876.54321",
+#       "title": "Referenced Paper One",
+#       "authors": ["Author A", "Author B"],
+#       "year": 2020,
+#       "doi": "10.1234/exampledoi1"
+#     },
+#     {
+#       "reference_id": "arxiv:1122.33445",
+#       "title": "Referenced Paper Two",
+#       "authors": ["Author C"],
+#       "year": 2021,
+#       "doi": "10.1234/exampledoi2"
+#     }
+#   ]
+# }
