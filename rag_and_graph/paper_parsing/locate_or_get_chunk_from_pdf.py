@@ -2,7 +2,9 @@ from typing import List, Tuple
 import re
 from tqdm import tqdm
 from PyPDF2 import PdfReader
-
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from typing import List, Dict, Tuple, Optional
+from tqdm import tqdm
 
 def tokenize_with_spans(text: str) -> List[Tuple[str, int, int]]:
     """
@@ -32,7 +34,8 @@ def _find_sequence_token_index(pdf_tokens: List[Tuple[str, int, int]],
 
     matches: List[int] = []
     # Use tqdm to iterate token indexes (helpful for large PDFs)
-    for i in tqdm(range(0, n - p + 1), desc="searching tokens", unit="i"):
+    # for i in tqdm(range(0, n - p + 1), desc="searching tokens", unit="i"):
+    for i in range(0, n - p + 1):
         # quick check first token match, then slice compare
         if pdf_tokens[i][0].lower() != target_lower[0]:
             continue
@@ -145,6 +148,85 @@ def locate_chunk_in_pdf(chunk: str, pdf_path: str, n_first: int, n_last: int) ->
     end_char = pdf_tokens[end_token_index][2]
 
     return (start_char, end_char)
+
+def _worker_locate(
+    section: Dict[str, str],
+    pdf_path: str,
+    n_first: int,
+    n_last: int,
+) -> Dict[str, object]:
+    """
+    Worker wrapper that calls locate_chunk_in_pdf for a single section dict.
+
+    Args:
+        section: {"section_title": str, "section_text": str}
+        pdf_path: path to PDF
+        n_first: number of first words to use
+        n_last: number of last words to use
+
+    Returns:
+        dict with keys "section_title", "section_text", "start_char", "end_char"
+    """
+    # Call the user's provided function (must be importable in this module)
+    start_char, end_char = locate_chunk_in_pdf(section["section_text"], pdf_path, n_first, n_last)
+
+    return {
+        "section_title": section.get("section_title", ""),
+        "section_text": section.get("section_text", ""),
+        "start_char": int(start_char),
+        "end_char": int(end_char),
+    }
+
+def locate_chunk_in_pdf_multiprocessed(
+    sections: List[Dict[str, str]],
+    pdf_path: str,
+    n_first: int = 10,
+    n_last: int = 10,
+    max_workers: Optional[int] = None,
+    show_progress: bool = False,
+) -> List[Dict[str, object]]:
+    """
+    Locate multiple chunks (sections) in a PDF using multiprocessing.
+
+    Args:
+        sections: List of dicts where each dict is {"section_title": str, "section_text": str}
+        pdf_path: Path to the PDF file to search
+        n_first: number of first words to use when locating each chunk (passed to locate_chunk_in_pdf)
+        n_last: number of last words to use when locating each chunk (passed to locate_chunk_in_pdf)
+        max_workers: number of worker processes (None => default decided by ProcessPoolExecutor)
+        show_progress: whether to display a tqdm progress bar
+
+    Returns:
+        List of dicts where each dict is
+        {"section_title": str, "section_text": str, "start_char": int, "end_char": int}
+    """
+    if not sections:
+        return []
+
+    results: List[Dict[str, object]] = []
+    total = len(sections)
+
+    # Prepare the tasks as tuples so they are pickle-friendly
+    tasks = [(sec, pdf_path, n_first, n_last) for sec in sections]
+
+    # Use ProcessPoolExecutor for multiprocessing
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        futures = [executor.submit(_worker_locate, sec, pdf_path, n_first, n_last) for sec in sections]
+
+        if show_progress:
+            # Use tqdm to show progress as futures complete
+            for fut in tqdm(as_completed(futures), total=total, desc="Locating sections"):
+                res = fut.result()
+                results.append(res)
+        else:
+            # No progress display - collect in submission order
+            for fut in futures:
+                res = fut.result()
+                results.append(res)
+
+    return results
+
 
 # To get using location start and end
 def get_text_by_offsets(pdf_path: str, start_offset: int, end_offset: int) -> str:

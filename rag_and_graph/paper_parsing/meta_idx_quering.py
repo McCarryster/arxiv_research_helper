@@ -626,6 +626,41 @@ class ArxivMetaSearchDB:
                 return {original_citation: best}
             return {original_citation: False}
 
+    def search_paper_by_arxiv_id(self, arxiv_id: str, original_citation: Optional[str]=None) -> Any:
+        """
+        Thread-safe search: borrows a connection from the pool for each call.
+
+        Args:
+            arxiv_id: The arXiv ID to search for.
+            original_citation: Optional key for wrapping the result dictionary.
+
+        Returns:
+            dict mapping columns -> values for the selected match, or False if not found.
+            If original_citation is provided, returns {original_citation: result} for consistency.
+        """
+        if not arxiv_id:
+            return {original_citation: False} if original_citation else False
+
+        # Use pooled cursor for thread safety (each thread uses its own connection from pool)
+        with self.pooled_cursor() as cur:
+            cur.execute(
+                """
+                SELECT *
+                FROM PAPERS
+                WHERE arxiv_id = %s
+                LIMIT 1;
+                """,
+                (arxiv_id,)
+            )
+            row = cur.fetchone()
+            if row is None:
+                return {original_citation: False} if original_citation else False
+            cols = [desc[0] for desc in cur.description]
+            result = dict(zip(cols, row))
+            if original_citation:
+                return {original_citation: result}
+            return result
+
     # -------------------------
     # Cleanup: close pool and main conn
     # -------------------------

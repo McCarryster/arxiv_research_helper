@@ -5,7 +5,7 @@ from map_refs_by_names import get_matched_authors
 from find_refs_by_grobid import find_refs
 from dedupe_refs import deduplicate_refs
 from ref_marker_tailing import parse_mark_refs
-from locate_or_get_chunk_from_pdf import locate_chunk_in_pdf
+from locate_or_get_chunk_from_pdf import locate_chunk_in_pdf_multiprocessed
 # from dwm_meta_idx_quering import search_papers_parallel
 from meta_idx_quering import ArxivMetaSearchDB, run_searches_multithreaded
 from urllib.parse import urlparse
@@ -81,13 +81,8 @@ def extract_arxiv_id(input_str: str) -> str:
         arxiv_id = os.path.splitext(filename)[0]
         return arxiv_id
 
-def locate_multiprocessed(sectins: dict):
-    pass
-
-
-
 pdf_paths = [
-    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1308.0850v5.pdf", # markers
+    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1308.0850v5.pdf", # markers
     # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1508.04025v5.pdf",
     # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1508.07909v5.pdf",
     # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1511.06114v4.pdf",
@@ -103,7 +98,7 @@ pdf_paths = [
     # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1703.10722v3.pdf",
     # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1705.03122v3.pdf",
     # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1705.04304v3.pdf",
-    # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1706.03762v7.pdf", # markers
+    "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1706.03762v7.pdf", # markers
     # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1512.05287v5.pdf", # markers
     # "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/arxiv_pdfs/1602.01137v1.pdf", # markers
 ]
@@ -123,6 +118,7 @@ def prepare_multithreaded(pdf_path: str) -> Any:
     else:
         refs_content = find_refs(pdf_path)
         return sections, refs_content, use_markers, pdf_path, arxiv_id
+
 start_time = time.time()
 prepared_secs = []
 with ThreadPoolExecutor(max_workers=10) as executor:
@@ -130,13 +126,14 @@ with ThreadPoolExecutor(max_workers=10) as executor:
     for future in tqdm(as_completed(futures), total=len(futures), desc="Processing PDFs"):
         try:
             sections, refs, use_markers, pdf_path, arxiv_id = future.result()
+            sections = locate_chunk_in_pdf_multiprocessed(sections, pdf_path, n_first=6, n_last=6)
             prepared_secs.append((sections, refs, use_markers, pdf_path, arxiv_id))
         except Exception as e:
             print(f"Task generated an exception: {e}")
 end_time = time.time()
 print(f"Total time taken for GROBIDing {len(pdf_paths)} pdfs: {end_time - start_time} seconds")
 
-
+# sys.exit()
 
 
 # Finalazing with multiprocessing
@@ -164,15 +161,21 @@ def process_paper(paper: PreparedPaper, searcher: Any, max_workers: int, encodin
     sections, refs, use_markers, pdf_path, arxiv_id = paper
     section_found_refs: List[Tuple[str, str, Any]] = []
     final_chunks: List[Dict[str, Any]] = []
+    final_papers: List[Dict[str, Any]] = []
 
-    print(sections[0])
-    sys.exit()
+    # print(sections[0])
+    # print()
+    # print(sections[1])
+    # print()
+    # print(type(sections))
+    # sys.exit()
 
     # numbered citation markers flow
     if use_markers:
         queries = searcher.prepare_queries(refs)
         cache_arxiv_found_refs: Dict[str, Any] = run_searches_multithreaded(searcher, queries, max_workers=max_workers)
-
+        # print(len(cache_arxiv_found_refs.keys()))
+        # sys.exit()
         for sec in sections:
             section_found_refs = []
             sec_refs = match_refs_by_marker(pdf_path, sec, as_list=True)['reference_mapping']
@@ -183,17 +186,31 @@ def process_paper(paper: PreparedPaper, searcher: Any, max_workers: int, encodin
                     if item not in section_found_refs:
                         section_found_refs.append(item)
 
-            start, end = locate_chunk_in_pdf(sec['section_text'], pdf_path, n_first=6, n_last=6)
+
+            #   "chunks_ok": [
+            #         "chunk_id": "ac99312f-0fea-4349-a701-7cf18beab5c7",
+            #         "section_title": "...",
+            #         "chunk_text": "...",
+            #         "token_len": 999,
+            #         "is_citation_context": True,
+            #         "citations": [
+            #             {"arxiv_id": "7777.7777", "title": "...", "authors": ["author name 3", "author name 2"]},
+            #             {"arxiv_id": "6666.6666", "title": "...", "authors": ["author name 3", "author name 2"]},
+            #             ],
+            #         "start_offset": 0,
+            #         "end_offset": 412,
+            #         "checksum": "070a64ea183a6872555ad89f9e43e89a132dbc10cea79ddbe4b72202fb76b313",
+            #         "embedding_id": "weaviate_uuid_7f8a9c"],
+
             final_chunks.append({
-                "arxiv_id": arxiv_id,
                 "chunk_id": str(uuid.uuid4()),
                 "section_title": sec['section_title'],
                 "chunk_text": sec['section_text'],
                 "token_len": num_tokens_from_string(sec['section_text'], encoding_name),
                 "is_citation_context": bool(section_found_refs),
                 "citations": section_found_refs,
-                "start_offset": start,
-                "end_offset": end,
+                "start_offset": sec['start_char'],
+                "end_offset": sec['end_char'],
                 "checksum": generate_checksum(sec['section_text']),
                 "embedding_id": "weaviate_uuid_7f8a9c",
                 "uses_markers": True
@@ -224,7 +241,6 @@ def process_paper(paper: PreparedPaper, searcher: Any, max_workers: int, encodin
                     if item not in section_found_refs:
                         section_found_refs.append(item)
 
-            start, end = locate_chunk_in_pdf(sec['section_text'], pdf_path, n_first=6, n_last=6)
             final_chunks.append({
                 "arxiv_id": arxiv_id,
                 "chunk_id": str(uuid.uuid4()),
@@ -233,12 +249,49 @@ def process_paper(paper: PreparedPaper, searcher: Any, max_workers: int, encodin
                 "token_len": num_tokens_from_string(sec['section_text'], encoding_name),
                 "is_citation_context": bool(section_found_refs),
                 "citations": section_found_refs,
-                "start_offset": start,
-                "end_offset": end,
+                "start_offset": sec['start_char'],
+                "end_offset": sec['end_char'],
                 "checksum": generate_checksum(sec['section_text']),
                 "embedding_id": "weaviate_uuid_7f8a9c",
                 "uses_markers": False
             })
+
+    # Final update
+    single_ready_to_embed_paper = {
+    "arxiv_id": arxiv_id,
+    "title": "Example Research Paper Title",
+    "authors": [
+        {"name": "Author One", "affiliation": "Institution A"},
+        {"name": "Author Two", "affiliation": "Institution B"}
+        ],
+    "abstract": "This is the abstract of the paper.",
+    "publication_year": 2024,
+    "chunks_ok": [{
+            "chunk_id": "ac99312f-0fea-4349-a701-7cf18beab5c7",
+            "section_title": "...",
+            "chunk_text": "...",
+            "token_len": 999,
+            "is_citation_context": True,
+            "citations": [
+                {"arxiv_id": "7777.7777", "title": "...", "authors": ["author name 3", "author name 2"]},
+                {"arxiv_id": "6666.6666", "title": "...", "authors": ["author name 3", "author name 2"]},
+            ],
+            "start_offset": 0,
+            "end_offset": 412,
+            "checksum": "070a64ea183a6872555ad89f9e43e89a132dbc10cea79ddbe4b72202fb76b313",
+            "embedding_id": "weaviate_uuid_7f8a9c"
+        }],
+    "references": [
+            {"arxiv_id": "7777.7777", "title": "...", "authors": ["author name 3", "author name 2"]},
+            {"arxiv_id": "6666.6666", "title": "...", "authors": ["author name 3", "author name 2"]},
+    ]
+    }
+
+    print(arxiv_id)
+    test_res = searcher.search_paper_by_arxiv_id(arxiv_id)
+    print(test_res)
+    sys.exit()
+
 
     return final_chunks
 
@@ -312,14 +365,63 @@ def parallel_process_papers(prepared_secs: Sequence[PreparedPaper], searcher: An
 start_time = time.time()
 
 searcher = ArxivMetaSearchDB(PG, pool_minconn=1, pool_maxconn=20)
-results = parallel_process_papers(prepared_secs, searcher, max_workers=8, encoding_name="cl100k_base")
+results = parallel_process_papers(prepared_secs, searcher, max_workers=12, encoding_name="cl100k_base")
 
-end_time = time.time()
-print(f"Total time taken for FINALazing {len(pdf_paths)} pdfs: {end_time - start_time} seconds")
 
 for r in results:
     print(r)
     print('+'*120)
+
+
+
+
+
+
+end_time = time.time()
+print(f"Total time taken for FINALazing {len(pdf_paths)} pdfs: {end_time - start_time} seconds")
+
+
+single_ready_to_embed_paper = {
+  "paper_id": "1234.56789",
+  "title": "Example Research Paper Title",
+  "authors": [
+    {"name": "Author One", "affiliation": "Institution A"},
+    {"name": "Author Two", "affiliation": "Institution B"}
+    ],
+  "abstract": "This is the abstract of the paper.",
+  "publication_year": 2024,
+  "chunks_ok": [{
+        "chunk_id": "ac99312f-0fea-4349-a701-7cf18beab5c7",
+        "section_title": "...",
+        "chunk_text": "...",
+        "token_len": 999,
+        "is_citation_context": True,
+        "citations": [
+            {"arxiv_id": "7777.7777", "title": "...", "authors": ["author name 3", "author name 2"]},
+            {"arxiv_id": "6666.6666", "title": "...", "authors": ["author name 3", "author name 2"]},
+        ],
+        "start_offset": 0,
+        "end_offset": 412,
+        "checksum": "070a64ea183a6872555ad89f9e43e89a132dbc10cea79ddbe4b72202fb76b313",
+        "embedding_id": "weaviate_uuid_7f8a9c"
+    }],
+  "references": [
+        {"arxiv_id": "7777.7777", "title": "...", "authors": ["author name 3", "author name 2"]},
+        {"arxiv_id": "6666.6666", "title": "...", "authors": ["author name 3", "author name 2"]},
+  ]
+}
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -4,19 +4,6 @@ from typing import Dict, List, Tuple, Any
 
 
 class ReferenceMatcher:
-    """
-    Improved reference extractor & matcher for arXiv-style PDFs.
-
-    Improvements vs your original:
-    - Finds the reference section by searching for common headings case-insensitively
-      and using the last occurrence (references are usually at the end).
-    - If headings not found, restricts to the tail of the document (avoid matching body code).
-    - Supports both "[1] ..." and "1. ..." reference styles.
-    - More robust marker parsing: extracts any digit sequences and ranges from inside brackets,
-      so "[4,[7][8]" => 4,7,8; also supports [5,6] and ranges 1-3.
-    - Avoids greedy capture across the entire document.
-    """
-
     def __init__(self, tail_chars: int = 40000):
         """
         :param tail_chars: number of characters from the end of the PDF to consider
@@ -163,7 +150,7 @@ class ReferenceMatcher:
 
         Args:
             pdf_path (str): Path to the PDF file.
-            example_json (Dict[str, Any]): Example JSON with "text" and "section".
+            example_json (Dict[str, Any]): Example JSON with "section_text" and "section".
             as_list (bool): If True, return references as a flat list instead of dict.
         """
         # Extract text from PDF
@@ -173,7 +160,7 @@ class ReferenceMatcher:
         references = self.extract_references_from_text(pdf_text)
 
         # Markers from the example text
-        text_to_match = example_json.get("text", "")
+        text_to_match = example_json.get("section_text", "")
         markers = self.find_markers_in_text(text_to_match)
 
         # Create mapping: marker_text -> list of "[n] reference text" or "Reference not found"
