@@ -1,14 +1,14 @@
 .uvenv/
 .env
 .pytest_cache/
-arxiv_pdfs/
 __pycache__/
+config.py
 
 backend/
 easy_version/
 other/
 
-arxiv_paper_metadata/
+data/
 
 graph_db/
 tests/

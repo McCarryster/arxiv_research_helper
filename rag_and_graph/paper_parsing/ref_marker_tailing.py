@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 import requests
 import xml.etree.ElementTree as ET
 
@@ -116,7 +116,7 @@ def parse_grobid_tei(tei_xml: str, original_citation: Optional[str] = None) -> L
         })
     return results
 
-def parse_mark_refs(citation_list: List[str], host: str = GROBID_BASE) -> List[Dict]:
+def parse_mark_refs(citation_list: Set[str], host: str = GROBID_BASE) -> List[Dict]:
     """
     Parse a list of citation strings via GROBID.
     Returns [{'title': ..., 'authors_teiled': [...], 'original_citation': ...}, ...].

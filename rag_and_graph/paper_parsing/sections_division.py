@@ -150,7 +150,7 @@ def chunk_pdf_with_grobid(
             resp = requests.post(api_endpoint, files=files, timeout=grobid_timeout)
             resp.raise_for_status()
         except requests.RequestException as e:
-            raise RuntimeError(f"Error contacting GROBID at {api_endpoint}: {e}")
+            raise RuntimeError(f"Error {pdf_path} contacting GROBID at {api_endpoint}: {e}")
 
     tei_xml = resp.text
 
