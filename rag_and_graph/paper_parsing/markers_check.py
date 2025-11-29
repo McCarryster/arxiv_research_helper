@@ -1,6 +1,6 @@
 
 import re
-from typing import Tuple, Dict, Any, Optional
+from typing import Dict, Any
 import requests
 from lxml import etree # type: ignore
 

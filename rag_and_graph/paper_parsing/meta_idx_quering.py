@@ -3,13 +3,18 @@ import re
 import unicodedata
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+import requests
 
 import psycopg2
 import psycopg2.extras
 from psycopg2 import pool
+from psycopg2.extras import execute_values
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
+from tqdm.auto import tqdm
 from config import *
 
 class ArxivMetaSearchDB:
@@ -290,6 +295,175 @@ class ArxivMetaSearchDB:
 
         return {"inserted": inserted, "skipped_blank": skipped, "errors": errors}
 
+    def _add_citation_counts_openalex(self, show_progress: bool = True) -> None:
+        """
+        Create citation_count column if missing and populate it using multithreaded
+        OpenAlex lookups. Improvements for speed:
+        - concurrent HTTP fetches (ThreadPoolExecutor)
+        - session with retries/backoff
+        - collect all results in memory and perform a single bulk update using a
+            temporary table + INSERT ... (execute_values) + single UPDATE statement
+            (much faster than one UPDATE per row)
+        - number of workers is derived from the pool max connections (fallbacks provided)
+
+        Parameters
+        ----------
+        show_progress:
+            Whether to show a tqdm progress bar during network fetches.
+        """
+
+
+        # 1) Ensure column exists (single admin connection)
+        with self.conn.cursor() as cur:
+            cur.execute("ALTER TABLE PAPERS ADD COLUMN IF NOT EXISTS citation_count INTEGER;")
+        self.conn.commit()
+
+        # 2) Read distinct arXiv IDs using pooled cursor
+        with self.pooled_cursor() as cur:
+            cur.execute("SELECT DISTINCT arxiv_id FROM PAPERS WHERE arxiv_id IS NOT NULL;")
+            rows = cur.fetchall()
+        arxiv_ids: List[str] = [r[0] for r in rows] if rows else []
+
+        if not arxiv_ids:
+            return
+
+        # 3) Prepare a requests Session with retries/backoff
+        session = requests.Session()
+        retries = Retry(
+            total=5,
+            backoff_factor=0.5,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=("GET",),
+        )
+        adapter = HTTPAdapter(max_retries=retries, pool_maxsize=50)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        # polite user-agent for API usage
+        session.headers.update({"User-Agent": "arxiv-meta-search-db/1.0 (+https://example.org)"})
+
+        BASE_URL = "https://api.openalex.org/works"
+        per_page_params = {"per-page": 1, "select": "cited_by_count,ids"}
+
+        # 4) decide number of workers (attempt to use pool maxconn, fallback to sensible defaults)
+        pool_maxconn = getattr(self.pool, "maxconn", None) or getattr(self.pool, "_maxconn", None)
+        try:
+            max_workers = int(pool_maxconn) if pool_maxconn else min(32, max(4, (len(arxiv_ids) // 2) or 4))
+        except Exception:
+            max_workers = 8
+        # keep an upper cap to avoid too many concurrent HTTP connections
+        max_workers = max(4, min(max_workers, 64))
+
+        def _fetch_for_arxiv(arxiv_id: str) -> Tuple[str, Optional[int]]:
+            """
+            Returns tuple (arxiv_id, cited_by_count_or_None)
+            """
+            aid = (arxiv_id or "").strip()
+            if not aid:
+                return arxiv_id, None
+
+            # Attempt direct filter by ids.arxiv
+            try:
+                r = session.get(BASE_URL, params={"filter": f"ids.arxiv:{aid}", **per_page_params}, timeout=20)
+                r.raise_for_status()
+                payload = r.json()
+                results = payload.get("results") or []
+                if results:
+                    v = results[0].get("cited_by_count")
+                    return arxiv_id, int(v) if v is not None else None
+            except Exception:
+                # let fallback try; do not raise
+                pass
+
+            # Fallback: search by arXiv identifier forms
+            for q in (aid, f"arXiv:{aid}"):
+                try:
+                    r2 = session.get(BASE_URL, params={"search": q, **per_page_params}, timeout=20)
+                    r2.raise_for_status()
+                    payload2 = r2.json()
+                    results2 = payload2.get("results") or []
+                    if not results2:
+                        continue
+                    candidate = results2[0]
+                    ids_map = candidate.get("ids") or {}
+                    # verify the arXiv id is present in any ids value
+                    matched = False
+                    for vv in ids_map.values():
+                        try:
+                            if isinstance(vv, str) and aid in vv:
+                                matched = True
+                                break
+                        except Exception:
+                            continue
+                    if matched:
+                        v = candidate.get("cited_by_count")
+                        return arxiv_id, int(v) if v is not None else None
+                except Exception:
+                    continue
+
+            return arxiv_id, None
+
+        # 5) Run concurrent fetches and collect results
+        results: List[Tuple[str, Optional[int]]] = []
+        iterator = tqdm(arxiv_ids, desc="OpenAlex lookups", unit="id") if show_progress else None
+
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = {ex.submit(_fetch_for_arxiv, aid): aid for aid in arxiv_ids}
+            for fut in as_completed(futures):
+                try:
+                    aid, cnt = fut.result()
+                    results.append((aid, cnt))
+                except Exception:
+                    # If a worker raises unexpectedly, treat as not found
+                    failed_aid = futures.get(fut)
+                    results.append((failed_aid, None)) # type: ignore
+                if iterator is not None:
+                    iterator.update(1)
+
+        if iterator is not None:
+            iterator.close()
+
+        if not results:
+            return
+
+        # 6) Bulk update DB in one shot using a temporary table and execute_values
+        # Use the administrative single connection self.conn for the bulk operation.
+        rows_to_update = [(aid, cnt) for (aid, cnt) in results if aid is not None]
+        if not rows_to_update:
+            return
+
+        with self.conn.cursor() as cur:
+            # create a temporary table that will be dropped at transaction end
+            cur.execute(
+                "CREATE TEMP TABLE tmp_openalex_updates (arxiv_id TEXT PRIMARY KEY, citation_count INTEGER) ON COMMIT DROP;"
+            )
+            # bulk insert into temp table
+            execute_values(
+                cur,
+                "INSERT INTO tmp_openalex_updates (arxiv_id, citation_count) VALUES %s",
+                rows_to_update,
+                template="(%s, %s)",
+                page_size=1000,
+            )
+            # single UPDATE statement joining to the temp table
+            cur.execute(
+                """
+                UPDATE PAPERS p
+                SET citation_count = t.citation_count
+                FROM tmp_openalex_updates t
+                WHERE p.arxiv_id = t.arxiv_id;
+                """
+            )
+        # commit the bulk update
+        try:
+            self.conn.commit()
+        except Exception:
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+
+        return
+
     # -------------------------
     # build_db orchestration
     # -------------------------
@@ -300,6 +474,7 @@ class ArxivMetaSearchDB:
         self.vacuum_tables()
         self._create_index()
         idx_summary = self.check_index()
+        self._add_citation_counts_openalex()
         return {"insert": insert_summary, "duplicates": dup_summary, "indexes": idx_summary}
 
     # -------------------------
@@ -568,6 +743,7 @@ class ArxivMetaSearchDB:
                     id,
                     arxiv_id,
                     title,
+                    citation_count,
                     normalized_title,
                     normalized_authors,
                     title_and_authors,
@@ -598,6 +774,7 @@ class ArxivMetaSearchDB:
                         id,
                         arxiv_id,
                         title,
+                        citation_count,
                         normalized_title,
                         normalized_authors,
                         title_and_authors,
@@ -705,6 +882,6 @@ def run_searches_multithreaded(searcher: ArxivMetaSearchDB, queries_to_run: List
     return result
 
 
-# if __name__ == "__main__":
-#     db_worder = ArxivMetaSearchDB(PG)
-#     db_worder.build_db(arxiv_meta_path, dry_run=False)
+if __name__ == "__main__":
+    db_worder = ArxivMetaSearchDB(PG)
+    db_worder.build_db(arxiv_meta_path, dry_run=False)

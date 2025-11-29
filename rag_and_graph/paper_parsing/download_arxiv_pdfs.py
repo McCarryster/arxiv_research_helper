@@ -5,11 +5,16 @@ import os
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 from tqdm import tqdm
+import json
+
+# Better update idea: Also save metadata from openalex (e.g. citation counts) with pdfs
 
 def get_top_arxiv_papers_metadata(
     n_papers: int = 200,
     email: str = "your_email@example.com",
-    show_progress: bool = True
+    show_progress: bool = True,
+    save_meta_path = "/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/data/arxiv_citation_counts.json",
+    save_every_n: int = 200
 ) -> List[Dict[str, Any]]:
     """
     Fetches metadata for the top N most cited papers that have an arXiv version.
@@ -112,6 +117,16 @@ def get_top_arxiv_papers_metadata(
         except requests.exceptions.RequestException as e:
             print(f"\nError fetching metadata: {e}")
             break
+
+        finally:
+            processed_count += 1
+
+        if processed_count % save_every_n == 0:
+            with open(save_meta_path, 'w') as file:
+                json.dump(all_papers, file)
+
+    with open(save_meta_path, 'w') as file:
+        json.dump(all_papers, file)
 
     pbar.close()
     return all_papers

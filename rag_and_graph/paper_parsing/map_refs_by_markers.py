@@ -1,7 +1,9 @@
 import re
 import fitz  # PyMuPDF
 from typing import Dict, List, Tuple, Any
+import logging
 
+logging.basicConfig(filename='/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/rag_and_graph/paper_parsing/final_processing.log', filemode='a', format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 class ReferenceMatcher:
     def __init__(self, tail_chars: int = 40000):
@@ -37,13 +39,16 @@ class ReferenceMatcher:
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """Extract text from PDF file (concatenate pages)."""
-        doc = fitz.open(pdf_path)
-        text_parts = []
-        for page in doc:
-            # get_text() may return unicode; ensure string concatenation is safe
-            text_parts.append(page.get_text())  # type: ignore
-        doc.close()
-        return "\n".join(text_parts)
+        try:
+            doc = fitz.open(pdf_path)
+            text_parts = []
+            for page in doc:
+                text_parts.append(page.get_text()) # type: ignore
+            doc.close()
+            return "\n".join(text_parts)
+        except Exception as e:
+            logging.error(f"Error processing PDF {pdf_path}: {e}")
+            return ""
 
     def _locate_reference_section(self, full_text: str) -> str:
         """

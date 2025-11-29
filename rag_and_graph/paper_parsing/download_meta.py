@@ -1,17 +1,3 @@
-#!/usr/bin/env python3
-"""
-arXiv OAI-PMH harvester -> NDJSON (robust resume + duplicate-avoidance)
-
-Fixes:
-- avoids infinite re-download when server returns the same resumptionToken repeatedly
-- falls back to resume-by-date when token is stale or repeating without progress
-- keeps cumulative records_written from checkpoint (so log numbers are accurate)
-- skips already-written records until the checkpoint's last_identifier is observed
-- saves checkpoints after each page and periodically during page processing
-
-Usage: drop into your environment and run; no CLI/argparse used (per requirements).
-"""
-
 import json
 import time
 import sys

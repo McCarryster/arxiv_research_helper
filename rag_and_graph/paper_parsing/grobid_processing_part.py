@@ -1,4 +1,10 @@
-
+# from locate_or_get_chunk_from_pdf import locate_sections_parallel
+from markers_check import uses_numbered_citations
+from sections_division import chunk_pdf_with_grobid
+from map_refs_by_markers import match_refs_by_marker
+from ref_marker_tailing import parse_mark_refs
+from find_refs_by_grobid import find_refs
+from config import *
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Tuple, Set
 from urllib.parse import urlparse
@@ -10,13 +16,9 @@ import shutil
 import time
 import os
 
-# from locate_or_get_chunk_from_pdf import locate_sections_parallel
-from markers_check import uses_numbered_citations
-from sections_division import chunk_pdf_with_grobid
-from map_refs_by_markers import match_refs_by_marker
-from ref_marker_tailing import parse_mark_refs
-from find_refs_by_grobid import find_refs
-from config import *
+
+# Better update idea: Make saving as JSONL instead of _atomic_write_json(). Might be easier and better
+
 
 Sections = List[Dict[str, Any]]
 Ref = List[Dict[str, Any]]

@@ -1,17 +1,5 @@
-"""
-bib_cleaner.py
-
-Given a list of bibliography-like strings that contains both short citations
-(e.g. "Bahdanau et al.2015]") and full entries (e.g. "D. Bahdanau, K. Cho, ... 2015. ..."),
-this module provides a function `remove_short_duplicates` which will return a
-cleaned list where the short citation entries are removed if a matching full
-entry (same author surname and year) exists.
-
-No CLI. Drop-in function usage demonstrated at the bottom with your sample list.
-"""
-
 import re
-from typing import List, Tuple, Dict, Optional
+from typing import List, Dict, Optional
 
 
 _YEAR_RE = re.compile(r'(19|20)\d{2}')

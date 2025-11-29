@@ -3,27 +3,38 @@ from dedupe_refs import deduplicate_refs
 from meta_idx_quering import ArxivMetaSearchDB, run_searches_multithreaded
 from map_refs_by_markers import match_refs_by_marker
 from grobid_processing_part import grobid_processing
-from config import * # Imports config variables
+from config import *
 
 import tiktoken
+import os
 import hashlib
 import uuid
 import json
 import sys
 import time
-import pickle
+import tempfile
 import traceback
-from typing import Any, Dict, List, Tuple, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Tuple, Optional, Set
 from multiprocessing import Pool, current_process
 from tqdm import tqdm
+import logging
+
+logging.basicConfig(filename='/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/rag_and_graph/paper_parsing/final_processing.log', filemode='a', format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # UPDATES NEEDED:
     # 1. Add citation_count: int to every paper
+    # 2. Make saving as JSONL
+    # 3. Add str_authors field {"keyname": "Marwan", "forenames": "N." }, -> ["Marwan N."] for everything
+    # 4. Remake chunk citations from list to dicts
+    # 5. Rename embedding_id to chunk_embedding_id
+    # 6. Add title_abstract_embedding_id field to final paper
 
 # --- Type Definitions ---
 Sections = List[Dict[str, Any]]
 Ref = List[Dict[str, Any]]
 PreparedPaper = Tuple[Sections, Ref, bool, str, str]  # (sections, refs, use_markers, pdf_path, arxiv_id)
+ProcessedResult = Dict[str, Any]
 
 # 0. Helper functions
 def num_tokens_from_string(string: str, encoding_name: str) -> int:
@@ -51,7 +62,6 @@ def generate_checksum(text):
     sha256_hash.update(text.encode('utf-8'))
     # Return the hexadecimal digest string
     return sha256_hash.hexdigest()
-
 
 # --- Worker State Management ---
 
@@ -97,10 +107,10 @@ def process_paper(paper: PreparedPaper) -> Dict[str, Any]:
     # 1. Fetch main paper metadata
     main_paper_meta = worker_searcher.search_paper_by_arxiv_id(arxiv_id)
     if not main_paper_meta:
-        print(f'BAD! {arxiv_id} paper was not found in arxiv_meta_db')
+        logging.info(f'BAD! {arxiv_id} paper was not found in arxiv_meta_db')
         return {}
 
-    section_found_refs: List[Tuple[str, str, Any]] = []
+    section_found_refs: List[Tuple[str, str, Any, Any]] = []
     final_chunks: List[Dict[str, Any]] = []
 
     # 2. Numbered citation markers flow
@@ -116,7 +126,8 @@ def process_paper(paper: PreparedPaper) -> Dict[str, Any]:
             for ref in sec_refs:
                 if ref in cache_arxiv_found_refs:
                     meta = cache_arxiv_found_refs[ref]['metadata']
-                    item = (meta['id'], meta.get('title'), meta['authors']['author'])
+                    citation_count = cache_arxiv_found_refs[ref].get('citation_count', None)
+                    item = (meta['id'], meta.get('title'), meta['authors']['author'], citation_count)
                     if item not in section_found_refs:
                         section_found_refs.append(item)
 
@@ -153,11 +164,12 @@ def process_paper(paper: PreparedPaper) -> Dict[str, Any]:
 
             for _, val in cache_arxiv_found_refs.items():
                 formatted_authors = worker_searcher.format_authors(val['metadata']['authors']['author'])
+                citation_count = val.get('citation_count', None)
                 if not formatted_authors:
                     continue
                 searched_name = worker_searcher.normalize_text(formatted_authors[0])
                 if match_name(searched_name, sec_authors):
-                    item = (val['metadata']['id'], val['metadata'].get('title'), val['metadata']['authors']['author'])
+                    item = (val['metadata']['id'], val['metadata'].get('title'), val['metadata']['authors']['author'], citation_count)
                     if item not in section_found_refs:
                         section_found_refs.append(item)
 
@@ -177,9 +189,14 @@ def process_paper(paper: PreparedPaper) -> Dict[str, Any]:
     # 4. Gather overall references
     overall_refs: List[Dict[str, Any]] = []
     for _, meta in cache_arxiv_found_refs.items():
+        print('-'*120)
+        print('WTFFFFFFFFFFFF', meta)
+        print('-'*120)
+        sys.exit()
         overall_refs.append({
             'arxiv_id': meta['arxiv_id'], 
-            'title': meta['metadata']['title'], 
+            'title': meta['metadata']['title'],
+            'citation_count': meta.get('citation_count', None),
             'authors': meta['metadata']['authors']['author']
         })
 
@@ -187,6 +204,7 @@ def process_paper(paper: PreparedPaper) -> Dict[str, Any]:
     single_ready_to_embed_paper = {
         "arxiv_id": arxiv_id,
         "title": main_paper_meta['title'],
+        "citation_count": main_paper_meta.get('citation_count', None),
         "authors": main_paper_meta['metadata']['authors']['author'],
         "abstract": main_paper_meta['metadata']['abstract'],
         "created": main_paper_meta['metadata']['created'],
@@ -205,31 +223,74 @@ def process_paper_safe(paper: PreparedPaper) -> Optional[Dict[str, Any]]:
     except Exception as e:
         # Log the error with the arxiv_id if available
         arxiv_id = paper[4] if len(paper) > 4 else "Unknown"
-        print(f"\n[Error] Failed processing {arxiv_id}: {e}")
+        logging.info(f"\n[Error] Failed processing {arxiv_id}: {e}")
         traceback.print_exc()
         return None
 
 # --- Main Execution ---
+# def run_processing_pipeline(papers_data: List[PreparedPaper], show_progress: bool = True, num_processes: int = 4) -> List[ProcessedResult]:
+def run_processing_pipeline(papers_data: List[PreparedPaper], show_progress: bool = True, num_processes: int = 4) -> Set[str]:
+    """
+    Process papers in parallel and persist intermediate results to allow resuming.
 
-def run_processing_pipeline(papers_data: List[PreparedPaper], show_progress: bool = True, num_processes: int = 4) -> List[Dict[str, Any]]:
+    Parameters
+    ----------
+    papers_data:
+        List of PreparedPaper tuples: (sections, refs, use_markers, pdf_path, arxiv_id)
+    show_progress:
+        Whether to show a tqdm progress bar for overall progress.
+    num_processes:
+        Number of worker processes for multiprocessing.Pool.
+
+    Returns
+    -------
+    Set[str]
+        Set of processed ids (new + already processed, if any)
+    """
     
-    processed_results: List[Dict[str, Any]] = []
-    
-    # PG config and max_workers (threads) to the initializer
+    # processed_results: List[ProcessedResult] = []
+    processed_ids: Set[str] = set()
+    if os.path.exists(final_papers_path):
+        print(f"📂 Scanning existing file: {final_papers_path}...")
+        try:
+            with open(final_papers_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.strip():
+                        try:
+                            record = json.loads(line)
+                            if 'id' in record:
+                                processed_ids.add(record['arxiv_id'])
+                        except json.JSONDecodeError as e:
+                            print(f"Decode error {e}: {line}")
+                            continue
+            print(f"✅ Resuming: Found {len(processed_ids)} processed papers.")
+        except Exception as e:
+            print(f"⚠️  Error reading existing data: {e}. Starting fresh.")
+
+
+    # Filter out already-processed papers
+    papers_to_process: List[PreparedPaper] = [p for p in papers_data if (len(p) >= 5 and str(p[4]) not in processed_ids)]
+
+    if not papers_to_process:
+        return set() # Nothing new to do
+
     pool_args = (PG, max_workers)
+    # Create iterator from pool
+    with open(final_papers_path, 'a', encoding='utf-8', buffering=1) as f_out:
+        with Pool(processes=num_processes, initializer=init_worker, initargs=pool_args) as pool:
+            iterator = pool.imap_unordered(process_paper_safe, papers_to_process)
 
-    with Pool(processes=num_processes, initializer=init_worker, initargs=pool_args) as pool:
-        # imap_unordered is faster if order doesn't matter (imap if order is needed)
-        iterator = pool.imap_unordered(process_paper_safe, papers_data)
-        
-        if show_progress:
-            iterator = tqdm(iterator, total=len(papers_data), desc="Processing Papers")
-            
-        for result in iterator:
-            if result:
-                processed_results.append(result)
-                
-    return processed_results
+            if show_progress:
+                iterator = tqdm(iterator, total=len(papers_to_process), desc="Processing Papers")
+
+            for result in iterator:
+                if result:
+                    arxiv_id = str(result.get("arxiv_id")) if isinstance(result, dict) else None
+                    if arxiv_id and arxiv_id not in processed_ids:
+                        processed_ids.add(arxiv_id)
+                        f_out.write(json.dumps(result) + "\n")
+
+    return processed_ids
 
 if __name__ == "__main__":
     start_time = time.time()
@@ -249,10 +310,6 @@ if __name__ == "__main__":
             end_time = time.time()
             print(f"SUCCESS!!! TOOK FOR ALL SHIT {len(results)} pdfs: {end_time - start_time} seconds")
 
-            # Save results
-            with open(final_papers_path, 'w', encoding='utf-8') as f:
-                json.dump(results, f, default=str, indent=2)
-                
     except KeyboardInterrupt:
         print("\nProcessing interrupted by user.")
         sys.exit(0)
