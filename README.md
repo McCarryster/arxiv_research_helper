@@ -6,7 +6,7 @@
     + Optimized metadata Pre-Filtering
     + Easy to deploy
 
-2. Qwen3 0.6B:
+2. Qwen/Qwen3-Embedding-0.6B:
     + Small
     + Good on benchmarks
     + Free and open sourse

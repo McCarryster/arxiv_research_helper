@@ -22,13 +22,11 @@ import logging
 
 logging.basicConfig(filename=log_dir, filemode='a', format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# UPDATES NEEDED:
-    # 1. Add citation_count: int to every paper
-    # 2. Make saving as JSONL
-    # 3. Add str_authors field {"keyname": "Marwan", "forenames": "N." }, -> ["Marwan N."] for everything
-    # 4. Remake chunk citations from list to dicts
-    # 5. Rename embedding_id to chunk_embedding_id
-    # 6. Add title_abstract_embedding_id field to final paper
+# Future improvements:
+    # 1. Add concept field. from title+abstract to a paper and from every chunk to chunk
+    # 2. Add splitting function during preparing (maybe)
+    # 3. Add paper_id to every chunk from that paper
+    # 4. ...
 
 # --- Type Definitions ---
 Sections = List[Dict[str, Any]]
