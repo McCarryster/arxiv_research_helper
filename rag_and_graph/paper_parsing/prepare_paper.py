@@ -26,7 +26,8 @@ logging.basicConfig(filename=log_dir, filemode='a', format='%(asctime)s - %(leve
     # 1. Add concept field. from title+abstract to a paper and from every chunk to chunk
     # 2. Add splitting function during preparing (maybe)
     # 3. Add paper_id to every chunk from that paper
-    # 4. ...
+    # 4. Add checksum for title+abstract for quick duplicate check
+    # 5. Add logic for storing prepared papers into some db
 
 # --- Type Definitions ---
 Sections = List[Dict[str, Any]]

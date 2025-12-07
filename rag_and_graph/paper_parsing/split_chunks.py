@@ -70,7 +70,7 @@ def process_single_chunk(
             "citations": list(original.get("citations", [])),
             "checksum": generate_checksum(chunk_text),
             "uses_markers": original.get("uses_markers", False),
-            "embedding_id": "",
+            "chunk_embedding_id": "",
         }
         return [new_chunk]
 
@@ -98,7 +98,7 @@ def process_single_chunk(
             "citations": list(original.get("citations", [])),
             "checksum": generate_checksum(chunk_text),
             "uses_markers": original.get("uses_markers", False),
-            "embedding_id": "",
+            "chunk_embedding_id": "",
         }
         chunks.append(chunk_dict)
 
@@ -135,8 +135,6 @@ def process_jsonl_stream(
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError as exc:
-                # Skip malformed lines but continue processing
-                # In production you may want to log this instead
                 print(f"Skipping line {line_num}: JSON decode error: {exc}")
                 continue
 

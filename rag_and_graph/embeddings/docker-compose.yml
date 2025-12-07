@@ -12,11 +12,12 @@ services:
     - 8080:8080
     - 50051:50051
     volumes:
-    - weaviate_data:/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/data/weaviate_db
+    # - weaviate_data:/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/data/weaviate_db
+    - /home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/data/weaviate_db:/var/lib/weaviate
     restart: on-failure:0
     environment:
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
-      PERSISTENCE_DATA_PATH: '/home/mccarryster/very_big_work_ubuntu/ML_projects/arxiv_research_helper/data/weaviate_db'
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
       ENABLE_MODULES: ''
       CLUSTER_HOSTNAME: 'node1'
 volumes:
