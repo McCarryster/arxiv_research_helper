@@ -12,9 +12,7 @@ import uuid
 import json
 import sys
 import time
-import tempfile
 import traceback
-from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional, Set
 from multiprocessing import Pool, current_process
 from tqdm import tqdm
@@ -28,6 +26,7 @@ logging.basicConfig(filename=log_dir, filemode='a', format='%(asctime)s - %(leve
     # 3. Add paper_id to every chunk from that paper
     # 4. Add checksum for title+abstract for quick duplicate check
     # 5. Add logic for storing prepared papers into some db
+    # 6. Add token_len for title + abstract
 
 # --- Type Definitions ---
 Sections = List[Dict[str, Any]]

@@ -5,13 +5,14 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from typing import List, Dict, Any, Union, Optional, Tuple
 from weaviate.classes.config import Property, DataType, Configure
+from weaviate.classes.query import Filter
 from tqdm.auto import tqdm
 from config import *
 import os
 
 # UPDATES NEEDED:
-    # 1. Don't save embeddings to jsonl. Directly save them to weaviate
-    # 2. 
+    # 1. Use vLLM
+    # 2. Write function that updates JSONL with Weaviate IDs after insertion
 
 
 # --- Logging Setup ---
@@ -305,11 +306,66 @@ class VectorDBBuilder:
         self.create_weaviate_schema()
         self.jsonl_batch_processing(path=JSONL_PATH)
 
+    # def search_paper_weaviate_by_id(self, collection_name: str, arxiv_id: str) -> Optional[Dict]:
+    #     """
+    #     Retrieves a specific paper by its arXiv ID from the Paper collection.
+        
+    #     Args:
+    #         arxiv_id: The arXiv ID of the paper to retrieve (e.g., "2401.12345").
+        
+    #     Returns:
+    #         Dictionary containing paper properties if found, None otherwise.
+    #     """
+    #     client = self._get_client()
+    #     if not client:
+    #         # logger.error("Failed to connect to Weaviate client")
+    #         return None
+        
+    #     try:
+    #         with client:
+    #             collection = client.collections.use(collection_name)
+    #             response = collection.query.fetch_objects(
+    #                 filters=Filter.by_property("arxiv_id").equal(arxiv_id),
+    #                 limit=3
+    #             )
+    #         for o in response.objects:
+    #             print(o.vector)
+                    
+    #     except Exception as e:
+    #         # logger.error(f"Error searching for paper {arxiv_id}: {e}")
+    #         return None
+
+    def search_paper_weaviate_by_id(self, collection_name: str, arxiv_id: str) -> Optional[Dict]:
+        client = self._get_client()
+        if not client:
+            return None
+        
+        try:
+            with client:
+                collection = client.collections.use(collection_name)
+                response = collection.query.fetch_objects(
+                    filters=Filter.by_property("arxiv_id").equal(arxiv_id),
+                    include_vector=True,
+                    limit=3
+                )
+                
+                for o in response.objects:
+                    print(f"Vector: {o.vector}")  # Now prints the vector!
+                    print(f"Properties: {o.properties}")
+                    return {
+                        "properties": o.properties,
+                        "vector": o.vector  # Full vector array
+                    }
+                    
+        except Exception as e:
+            logger.error(f"Error searching for paper {arxiv_id}: {e}")
+            return None
 
 if __name__ == "__main__":
     # Example usage
     try:
         builder = VectorDBBuilder(device="cuda", batch_size=BATCH_SIZE)
-        builder.build_db()
+        builder.search_paper_weaviate_by_id("Paper", "1706.03762")
+        # builder.build_db()
     except Exception as e:
         logger.critical(f"Pipeline failed: {e}")
