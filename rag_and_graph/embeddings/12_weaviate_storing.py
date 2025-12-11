@@ -1,37 +1,36 @@
 import weaviate
 import json
 import logging
-import numpy as np
-from sentence_transformers import SentenceTransformer
-from typing import List, Dict, Any, Union, Optional, Tuple
+from vllm.outputs import EmbeddingRequestOutput
+from vllm import LLM
+from typing import List, Dict, Any, Optional, Tuple
 from weaviate.classes.config import Property, DataType, Configure
 from weaviate.classes.query import Filter
 from tqdm.auto import tqdm
 from config import *
-import os
 
 # UPDATES NEEDED:
-    # 1. Use vLLM
-    # 2. Write function that updates JSONL with Weaviate IDs after insertion
+    # 1. Remake embeddings 16bit (bf16) from 32bit
+    # 2. Make duplicate insert prevention logic
+    # 3. Write function that searches jsonl and weaviate db and return full ready object
 
 
 # --- Logging Setup ---
+logging.getLogger().handlers.clear()  # Remove default StreamHandler
 logging.basicConfig(
     filename=LOG_DIR,
     filemode='a',
     format="%(asctime)s [%(levelname)s] %(message)s",
-    level=logging.INFO
+    level=logging.INFO,
+    force=True  # Python 3.8+: Forces reconfiguration
 )
 logger = logging.getLogger(__name__)
 
-# --- Type Definitions ---
-ChunkData = Dict[str, Union[str, float, int]]
-DataObject = Dict[str, Any]
 
-class VectorDBBuilder:
-    def __init__(self, device: str = "cuda", batch_size: int = 32):
+class VLLMQwenEmbedder:
+    def __init__(self, device: str = "cuda", batch_size: int = 16, gpu_memory_utilization:float = 0.7):
         """
-        Initializes the builder.
+        Initializes the VLLM engine with hf model.
         
         Args:
             device: 'cuda' for GPU or 'cpu'.
@@ -39,12 +38,45 @@ class VectorDBBuilder:
         """
         self.device = device
         self.batch_size = batch_size
+        self.gpu_memory_utilization = gpu_memory_utilization
         self.embedding_model = self._get_embedding_model()
 
-    def _get_embedding_model(self) -> SentenceTransformer:
-        logger.info(f"Loading embedding model: {MODEL_PATH} on {self.device}...")
-        return SentenceTransformer(MODEL_PATH, device=self.device)
+    def _get_embedding_model(self) -> LLM:
+            """
+            Loads the vLLM engine.
+            """
+            logger.info(f"Loading vLLM embedding model: {MODEL_PATH}...")
+            
+            # vLLM defaults to CUDA.
+            return LLM(
+                model=MODEL_PATH,
+                enforce_eager=True,      # is often safer for embedding tasks to avoid graph capture issues on irregular sizes
+                gpu_memory_utilization=self.gpu_memory_utilization,
+                seed=9
+            )
 
+    def batch_encode(self, texts: List[str]) -> List[EmbeddingRequestOutput]:
+        """
+        Generates embeddings for a batch of texts using vLLM.
+        
+        Args:
+            texts: List of strings to encode.
+
+        Returns:
+            A list of `EmbeddingRequestOutput` objects containing the
+            embedding vectors in the same order as the input prompts.
+        """
+        if not texts:
+            return []
+
+        outputs = self.embedding_model.embed(texts, use_tqdm=False)
+        return outputs
+
+class VectorDBBuilder(VLLMQwenEmbedder):
+    def __init__(self, embedder: VLLMQwenEmbedder, batch_size: int = 16):
+        self.embedder = embedder
+        self.batch_size = batch_size
+    
     def _get_client(self) -> Optional[weaviate.WeaviateClient]:
         """
         Connects to the local Weaviate instance.
@@ -112,25 +144,20 @@ class VectorDBBuilder:
             logger.error(f"An error occurred while creating schema: {e}")
             raise
 
-    def _batch_encode(self, texts: List[str]) -> np.ndarray | list:
+    def _prepare_for_encoding(self, big_batch: List[Dict]) -> Tuple[List[Dict], List[List[Dict]]]:
         """
-        Generates embeddings for a batch of texts.
-        Returns numpy array
-        """
-        if not texts:
-            return []
-        
-        # encode returns a numpy array (shape: (len(texts), embedding_dim), dtype: float32)
-        embeddings_array = self.embedding_model.encode(
-            texts, 
-            batch_size=self.batch_size, 
-            show_progress_bar=False, 
-            convert_to_numpy=True
-        )
-        
-        return embeddings_array
+        Transforms a batch of paper data into two lists: one with paper metadata 
+        (arXiv ID, title, abstract) and another with corresponding content chunks.
 
-    def _prepare_for_encoding(self, big_batch: List[Dict]):
+        Args:
+            big_batch (List[Dict]): A list of paper dictionaries, each containing
+                metadata and optionally a list of text chunks under 'chunks'.
+
+        Returns:
+            Tuple[List[Dict], List[List[Dict]]]: 
+                - papers_batch: List of dicts with extracted paper properties.
+                - chunks_batch: List of lists, each containing chunk dictionaries for a paper.
+        """
         papers_batch: List[Dict] = [] # 1
         chunks_batch: List[List[Dict]] = [] # n chunks for 1 paper
         for obj in big_batch:
@@ -145,17 +172,18 @@ class VectorDBBuilder:
             chunks_batch.append(obj.get('chunks', []))
         return papers_batch, chunks_batch
     
-    def _embed_papers(self, papers: List[Dict]) -> List[Dict]:
+    def _embed_papers(self, papers: List[Dict[str, Any]]) -> List[Dict]:
         papers_batch: List[str] = []
         for paper_obj in papers:
             text_for_embedding = f"{paper_obj['properties']['title']} {paper_obj['properties']['abstract']}"
             papers_batch.append(text_for_embedding)
 
-        embeddings = self._batch_encode(papers_batch)
-        
-        ready_papers_batch: List[Dict] = []
-        for i, paper_obj in enumerate(papers):
-            paper_obj['vector'] = embeddings[i]
+        outputs = self.embedder.batch_encode(papers_batch)
+
+        ready_papers_batch: List[Dict[str, Any]] = []
+        for paper_obj, output in zip(papers, outputs):
+            embeds = output.outputs.embedding
+            paper_obj['vector'] = embeds
             ready_papers_batch.append(paper_obj)
 
         return ready_papers_batch
@@ -168,9 +196,10 @@ class VectorDBBuilder:
             for chunk_dict in list_of_dicts:
                 chunks_text_batch.append(chunk_dict['chunk_text'])
 
-            embeddings = self._batch_encode(chunks_text_batch)
+            outputs = self.embedder.batch_encode(chunks_text_batch)
 
-            for i, chunk_dict in enumerate(list_of_dicts):
+            for chunk_dict, output in zip(list_of_dicts, outputs):
+                embeds = output.outputs.embedding
                 chunks_obj: Dict[str, Any] = {
                     "properties": {
                         "chunk_paper_id": chunk_dict['chunk_paper_id'], 
@@ -180,7 +209,7 @@ class VectorDBBuilder:
                         "token_len": chunk_dict['token_len'], 
                         "checksum": chunk_dict['checksum']
                     },
-                    "vector": embeddings[i]
+                    "vector": embeds
                 }
                 ready_chunks_batch.append(chunks_obj)
         
@@ -296,44 +325,12 @@ class VectorDBBuilder:
             logger.error(f"An error occurred while creating schema: {e}")
             raise
 
-    def update_jsonl_with_weaviate_ids(self):
-        raise NotImplementedError("Not implemented")
-
     def build_db(self) -> None:
         """
         Orchestrates the entire pipeline.
         """
         self.create_weaviate_schema()
         self.jsonl_batch_processing(path=JSONL_PATH)
-
-    # def search_paper_weaviate_by_id(self, collection_name: str, arxiv_id: str) -> Optional[Dict]:
-    #     """
-    #     Retrieves a specific paper by its arXiv ID from the Paper collection.
-        
-    #     Args:
-    #         arxiv_id: The arXiv ID of the paper to retrieve (e.g., "2401.12345").
-        
-    #     Returns:
-    #         Dictionary containing paper properties if found, None otherwise.
-    #     """
-    #     client = self._get_client()
-    #     if not client:
-    #         # logger.error("Failed to connect to Weaviate client")
-    #         return None
-        
-    #     try:
-    #         with client:
-    #             collection = client.collections.use(collection_name)
-    #             response = collection.query.fetch_objects(
-    #                 filters=Filter.by_property("arxiv_id").equal(arxiv_id),
-    #                 limit=3
-    #             )
-    #         for o in response.objects:
-    #             print(o.vector)
-                    
-    #     except Exception as e:
-    #         # logger.error(f"Error searching for paper {arxiv_id}: {e}")
-    #         return None
 
     def search_paper_weaviate_by_id(self, collection_name: str, arxiv_id: str) -> Optional[Dict]:
         client = self._get_client()
@@ -348,24 +345,28 @@ class VectorDBBuilder:
                     include_vector=True,
                     limit=3
                 )
-                
+
                 for o in response.objects:
-                    print(f"Vector: {o.vector}")  # Now prints the vector!
+                    print(f"UUID: {o.uuid}")  # Weaviate-generated UUID
+                    print(f"Vector: {o.vector}")
                     print(f"Properties: {o.properties}")
                     return {
+                        "uuid": o.uuid,  # Weaviate-generated UUID
                         "properties": o.properties,
-                        "vector": o.vector  # Full vector array
+                        "vector": o.vector
                     }
                     
         except Exception as e:
             logger.error(f"Error searching for paper {arxiv_id}: {e}")
             return None
 
+
 if __name__ == "__main__":
     # Example usage
     try:
-        builder = VectorDBBuilder(device="cuda", batch_size=BATCH_SIZE)
+        embedder = VLLMQwenEmbedder(batch_size=BATCH_SIZE, gpu_memory_utilization=0.7)
+        builder = VectorDBBuilder(embedder=embedder)
+        builder.build_db()
         builder.search_paper_weaviate_by_id("Paper", "1706.03762")
-        # builder.build_db()
     except Exception as e:
         logger.critical(f"Pipeline failed: {e}")

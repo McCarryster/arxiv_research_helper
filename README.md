@@ -9,6 +9,6 @@
 2. Qwen/Qwen3-Embedding-0.6B:
     + Small
     + Good on benchmarks
-    + Free and open sourse
+    + Free and open source
 
 3. 
