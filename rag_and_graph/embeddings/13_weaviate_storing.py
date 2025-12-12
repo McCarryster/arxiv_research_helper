@@ -9,6 +9,7 @@ from weaviate.classes.query import Filter
 import weaviate.util
 from tqdm.auto import tqdm
 from config import *
+import sys
 
 # UPDATES NEEDED:
     # 1. Remake embeddings 16bit (bf16) from 32bit - V
@@ -81,18 +82,18 @@ class VectorDBBuilder(VLLMQwenEmbedder):
     
     def _get_client(self) -> Optional[weaviate.WeaviateClient]:
         """
-        Connects to the local Weaviate instance.
+        Connects to the local Weaviate instance or exits on failure.
         """
         try:
             client = weaviate.connect_to_local()
             if not client.is_ready():
-                logger.error("[ERROR] Weaviate instance is not ready.")
+                logger.error("Weaviate instance is not ready.")
                 client.close()
-                return None
+                sys.exit(1)  # Use exit code for better debugging
             return client
         except Exception as e:
-            logger.error(f"[ERROR] Connection error: {e}")
-            return None
+            logger.error(f"Connection error: {e}")
+            sys.exit(1)
 
     def create_weaviate_schema(self) -> None:
         """
@@ -146,36 +147,46 @@ class VectorDBBuilder(VLLMQwenEmbedder):
             logger.error(f"An error occurred while creating schema: {e}")
             raise
 
-    # def _prepare_for_encoding(self, big_batch: List[Dict]) -> Tuple[List[Dict], List[List[Dict]]]:
-    #     """
-    #     Transforms a batch of paper data into two lists: one with paper metadata 
-    #     (arXiv ID, title, abstract) and another with corresponding content chunks.
+    def _check_exists(self, collection_name: str, identifier_value: str) -> bool | None:
+            """
+            Checks if a record exists in a specific collection based on a primary identifier.
+            
+            Args:
+                collection_name: The name of the collection ("Paper" or "Chunk").
+                identifier_value: The value to look for (arxiv_id for Paper, checksum for Chunk).
+                show_progress: Whether to show a tqdm progress bar (default False for inner loops).
+                
+            Returns:
+                bool: True if the record exists, False otherwise.
+            """
+            
+            client = self._get_client()
+            if not client:
+                return
+            
+            # Mapping collection names to their primary filterable property
+            id_map: Dict[str, str] = {
+                "Paper": "arxiv_id",
+                "Chunk": "checksum"
+            }
 
-    #     Args:
-    #         big_batch (List[Dict]): A list of paper dictionaries, each containing
-    #             metadata and optionally a list of text chunks under 'chunks'.
-
-    #     Returns:
-    #         Tuple[List[Dict], List[List[Dict]]]: 
-    #             - papers_batch: List of dicts with extracted paper properties.
-    #             - chunks_batch: List of lists, each containing chunk dictionaries for a paper.
-    #     """
-    #     papers_batch: List[Dict] = [] # 1
-    #     chunks_batch: List[List[Dict]] = [] # n chunks for 1 paper
-    #     for obj in big_batch:
-    #         paper_uuid = weaviate.util.generate_uuid5(obj.get('arxiv_id'))
-    #         paper_obj = {
-    #             "properties": {
-    #                 "arxiv_id": obj.get('arxiv_id'),
-    #                 "title": obj.get('title'),
-    #                 "abstract": obj.get('abstract')
-    #             },
-    #             "uuid": paper_uuid
-    #         }
-    #         papers_batch.append(paper_obj)
-    #         chunks_batch.append(obj.get('chunks', []))
-    #     return papers_batch, chunks_batch
-    
+            try:
+                with client: 
+                    target_property: Optional[str] = id_map.get(collection_name)
+                    if not target_property:
+                        logger.warning(f"Collection '{collection_name}' is not mapped for existence checks.")
+                        return False
+                    collection = client.collections.get(collection_name)
+                    # Fetch only 1 object with no properties to verify existence efficiently
+                    response = collection.query.fetch_objects(
+                        filters=Filter.by_property(target_property).equal(identifier_value),
+                        limit=1,
+                        return_properties=[] # We don't need the data, just the count/existence
+                    )
+                    return len(response.objects) > 0
+            except Exception as e:
+                logger.error(f"Error checking existence in {collection_name}: {e}")
+                return False
 
     def _prepare_for_encoding(self, big_batch: List[Dict]) -> Tuple[List[Dict], List[List[Dict]]]:
         """
@@ -198,23 +209,6 @@ class VectorDBBuilder(VLLMQwenEmbedder):
             chunks_batch.append(obj.get('chunks', []))
         return papers_batch, chunks_batch
 
-
-    def _embed_papers(self, papers: List[Dict[str, Any]]) -> List[Dict]:
-        papers_batch: List[str] = []
-        for paper_obj in papers:
-            text_for_embedding = f"{paper_obj['properties']['title']} {paper_obj['properties']['abstract']}"
-            papers_batch.append(text_for_embedding)
-
-        outputs = self.embedder.batch_encode(papers_batch)
-
-        ready_papers_batch: List[Dict[str, Any]] = []
-        for paper_obj, output in zip(papers, outputs):
-            embeds = output.outputs.embedding
-            paper_obj['vector'] = embeds
-            ready_papers_batch.append(paper_obj)
-
-        return ready_papers_batch
-
     def _embed_papers(self, papers: List[Dict[str, Any]]) -> List[Dict]:
         papers_batch: List[str] = []
         for paper_obj in papers:
@@ -226,8 +220,7 @@ class VectorDBBuilder(VLLMQwenEmbedder):
         ready_papers_batch: List[Dict[str, Any]] = []
         for paper_obj, output in zip(papers, outputs):
             embeds = output.outputs.embedding
-
-            paper_obj['vector'] = embeds
+            paper_uuid = weaviate.util.generate_uuid5(paper_obj['arxiv_id'])
 
             paper_obj: Dict[str, Any] = {
                 "properties": {
@@ -235,13 +228,12 @@ class VectorDBBuilder(VLLMQwenEmbedder):
                     "title": paper_obj['title'],
                     "abstract": paper_obj['abstract']
                 },
-                "vector": embeds
+                "vector": embeds,
+                "uuid": paper_uuid
             }
-
             ready_papers_batch.append(paper_obj)
 
         return ready_papers_batch
-
 
     def _embed_chunks(self, chunks: List[List[Dict]]) -> List[Dict]:
         ready_chunks_batch: List[Dict] = []
@@ -255,6 +247,7 @@ class VectorDBBuilder(VLLMQwenEmbedder):
 
             for chunk_dict, output in zip(list_of_dicts, outputs):
                 embeds = output.outputs.embedding
+                chunk_uuid = weaviate.util.generate_uuid5(chunk_dict['checksum'])
                 chunks_obj: Dict[str, Any] = {
                     "properties": {
                         "chunk_paper_id": chunk_dict['chunk_paper_id'], 
@@ -264,7 +257,8 @@ class VectorDBBuilder(VLLMQwenEmbedder):
                         "token_len": chunk_dict['token_len'], 
                         "checksum": chunk_dict['checksum']
                     },
-                    "vector": embeds
+                    "vector": embeds,
+                    "uuid": chunk_uuid
                 }
                 ready_chunks_batch.append(chunks_obj)
         
@@ -301,6 +295,26 @@ class VectorDBBuilder(VLLMQwenEmbedder):
                     except json.JSONDecodeError:
                         logger.warning("Skipping invalid JSON line")
                         continue
+
+                    # 1. Paper Level Check. If the Paper exists, we assume the whole object is a duplicate and skip it entirely.
+                    arxiv_id = obj.get("arxiv_id")
+                    if arxiv_id and self._check_exists("Paper", arxiv_id):
+                        logger.info(f"Skipping duplicate Paper: {arxiv_id}")
+                        continue
+
+                    # 2. Chunk Level Check. If Paper is new, we still need to check if specific chunks inside it already exist.
+                    if "chunks" in obj and isinstance(obj["chunks"], list):
+                        dedup_chunks: List[Dict[str, Any]] = []
+                        for chunk in obj["chunks"]:
+                            checksum = chunk["checksum"]
+                            if checksum and self._check_exists("Chunk", checksum):
+                                logger.info(f"Skipping duplicate Chunk: {obj['chunk_num'], obj['chunk_paper_id'], obj['token_len'], obj['section_title']}")
+                                continue
+                            
+                            dedup_chunks.append(chunk)
+                        
+                        # Replace the original list with the deduplicated list
+                        obj["chunks"] = dedup_chunks
 
                     big_batch.append(obj)
 
@@ -367,7 +381,8 @@ class VectorDBBuilder(VLLMQwenEmbedder):
                     for data_row in data_batch:
                         batch.add_object(
                             properties=data_row['properties'],
-                            vector = data_row['vector']
+                            vector = data_row['vector'],
+                            uuid=data_row['uuid']
                         )
                         if batch.number_errors > 10:
                             logger.error("Batch import stopped due to excessive errors.")
