@@ -486,7 +486,7 @@ class VectorDBBuilder():
                 o = response.objects[0]
                 logger.info(f"Search found paper with UUID: {o.uuid}")
                 return {
-                    "uuid": o.uuid,
+                    "uuid": str(o.uuid),
                     "properties": o.properties,
                     "vector": o.vector
                 }
@@ -504,17 +504,14 @@ if __name__ == "__main__":
     try:
         embedder = VLLMQwenEmbedder(batch_size=BATCH_SIZE, gpu_memory_utilization=GPU_MEM_UTIL)
         builder = VectorDBBuilder(embedder=embedder, batch_size=BATCH_SIZE)
-
         # --- Core Logic ---
-        builder.build_db() 
+        builder.build_db()
         print(builder.get_collection_length("Paper"))
-        result = builder.search_paper_weaviate_by_id("Paper", "1706.03762")
-        if result:
-            print(f"Search Result for 1706.03762:\n{json.dumps(result, indent=4)}")
+        print(builder.search_paper_weaviate_by_id("Paper", "1706.03762"))
             
     except Exception as e:
         logger.critical(f"Pipeline failed: {e}")
-        
+
     finally:
         if embedder:
             embedder.shutdown()

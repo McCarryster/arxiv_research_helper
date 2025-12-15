@@ -33,4 +33,4 @@ def download_qwen_embedding_model(
         print(f"An error occurred during download: {e}")
         raise
 
-download_qwen_embedding_model(model_path, model_id)
+download_qwen_embedding_model(MODEL_PATH, MODEL_ID)

@@ -164,8 +164,6 @@ class ArxivGraphDB:
                     )
                 tx.commit()
 
-
-
 # ===== Example Usage =====
 try:
     client = arxiv.Client()
