@@ -4,6 +4,7 @@
 __pycache__/
 config.py
 logs/
+TODO.md
 
 backend/
 easy_version/
