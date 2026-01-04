@@ -3,7 +3,7 @@ Pdf managment tools.
 """
 
 import arxiv
-from typing import Optional, List, cast
+from typing import Optional, cast
 import fitz  # PyMuPDF
 import requests
 from langchain.tools import tool

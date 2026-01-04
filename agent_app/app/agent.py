@@ -1,6 +1,7 @@
 import os
-import app.config as config, prompts
-from typing import List, Dict, Any
+import app.config as config
+from app import prompts
+from typing import List, Dict, Any, Optional
 from langchain_core.tools import BaseTool
 from langchain_core.messages import (
     BaseMessage,
@@ -11,28 +12,24 @@ from langchain_core.messages import (
 )
 from langchain_anthropic import ChatAnthropic
 from app.tools.pdf_tools import get_arxiv_pdf_content
+from pydantic import SecretStr
 
-# LangSmith integration for tracing
+# --- LangSmith Configuration ---
+if config.LANGSMITH_API_KEY:
+    os.environ["LANGSMITH_API_KEY"] = config.LANGSMITH_API_KEY
+    os.environ["LANGSMITH_TRACING"] = "true"
+    os.environ["LANGSMITH_PROJECT"] = config.LANGSMITH_PROJECT or "default"
 try:
     from langsmith import traceable
-    from langsmith.wrappers import wrap_anthropic
-    LANGSMITH_AVAILABLE = True
-    
-    # Configure LangSmith if API key is available
-    if config.LANGSMITH_API_KEY:
-        os.environ["LANGSMITH_API_KEY"] = config.LANGSMITH_API_KEY
-        os.environ["LANGSMITH_TRACING"] = "true"
-        if config.LANGSMITH_PROJECT:
-            os.environ["LANGSMITH_PROJECT"] = config.LANGSMITH_PROJECT
+    LANGSMITH_AVAILABLE: bool = True
 except ImportError:
-    LANGSMITH_AVAILABLE = False
-    # Create a no-op decorator if LangSmith is not available
-    def traceable(*args, **kwargs):
-        def decorator(func):
+    LANGSMITH_AVAILABLE: bool = False
+
+    def traceable(*args: Any, **kwargs: Any):
+        """No-op decorator if LangSmith is not installed."""
+        def decorator(func: Any):
             return func
         return decorator if not args else decorator(args[0])
-    def wrap_anthropic(client):
-        return client
 
 class ArxivAgent:
     """
@@ -54,9 +51,10 @@ class ArxivAgent:
         self.system_prompt: str = system_prompt
         self.steps_limit: int = steps_limit
 
-    @traceable
+    @traceable(name="ArxivAgent_Run")
     def run(self, query: str) -> str:
         """Main execution loop for the agent."""
+
         messages: List[BaseMessage] = [
             SystemMessage(content=self.system_prompt),
             HumanMessage(content=query)
@@ -95,23 +93,30 @@ class ArxivAgent:
 
 # --- Initialization ---
 def initialize_agent() -> ArxivAgent:
-    llm = ChatAnthropic(
+    """
+    Initializes the ArxivAgent with the Anthropic LLM and necessary tools.
+    """
+
+    api_key_str: Optional[str] = config.API_KEY
+    if not api_key_str:
+        raise ValueError("ANTHROPIC_API_KEY not found in configuration.")
+
+    # 1. Instantiate the LLM with the API key passed directly
+    llm: ChatAnthropic = ChatAnthropic(
         model_name=config.DEFAULT_MODEL,
         max_tokens_to_sample=config.MAX_TOKENS_PER_RESPONSE,
         temperature=config.TEMPERATURE,
+        api_key=SecretStr(api_key_str),
         timeout=None,
         stop=None,
     )
-    
-    if LANGSMITH_AVAILABLE:
-        llm = wrap_anthropic(llm)
 
-    # Define the toolset
+    # 2. Define the toolset
     tools: List[BaseTool] = [get_arxiv_pdf_content]
 
-    system_prompt = prompts.ARXIV_AGENT_SYSTEM_PROMPT
+    system_prompt: str = prompts.ARXIV_AGENT_SYSTEM_PROMPT
 
-    # Create the agent instance
+    # 3. Create the agent instance
     return ArxivAgent(
         name="ArxivResearcher",
         llm=llm,
